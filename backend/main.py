@@ -24,7 +24,7 @@ _LAST_UPDATE_MESSAGE = ""
 
 GAMEGEN_BASE_URL = "https://gamegen.lol/api"
 DEFAULT_API_KEY = ""
-VERSION = "3.4.1"
+VERSION = "3.4.2"
 REPO_OWNER = "TheMich157"
 REPO_NAME = "GameGenPlugin"
 UPDATE_CHECK_INTERVAL = 3600 * 2 # 2 hours
@@ -202,8 +202,8 @@ class Plugin:
                         download_url = data.get("zipball_url")
                     
                     if download_url:
-                        self._download_update(download_url)
-                        msg = f"Update v{remote_ver} downloaded. Restart Steam to apply."
+                        ok = self._download_update(download_url)
+                        msg = f"Update v{remote_ver} applied. Restart Steam to finish." if ok else f"Update v{remote_ver} download failed."
                         if not manual:
                             global _LAST_UPDATE_MESSAGE
                             _LAST_UPDATE_MESSAGE = msg
@@ -223,13 +223,18 @@ class Plugin:
         except:
             return remote > local
 
-    def _download_update(self, url: str):
+    def _download_update(self, url: str) -> bool:
         plugin_dir = self._get_plugin_dir()
-        target = os.path.join(plugin_dir, "update_pending.zip")
         data = self._download_with_retry(url, timeout=60)
         if data:
-            with open(target, 'wb') as f:
-                f.write(data)
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    z.extractall(plugin_dir)
+                self._log_debug("Update extracted directly to plugin dir.")
+                return True
+            except Exception as e:
+                self._log_debug(f"Direct update extraction failed: {e}")
+        return False
 
     def _download_with_retry(self, url: str, timeout: int = 30, retries: int = 3) -> Optional[bytes]:
         """ Helper for robust downloads with retries for IncompleteRead etc. """

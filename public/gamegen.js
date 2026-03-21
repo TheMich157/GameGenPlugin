@@ -8,7 +8,7 @@
     let uiInjected = false;
     let apiKeySet = false;
     let currentTab = 'generator';
-    const VERSION = '3.4.1';
+    const VERSION = '3.4.2';
 
     // -- Utilities --
 

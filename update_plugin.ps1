@@ -1,4 +1,4 @@
-# GameGen Plugin Auto-Updater (Improved v3.4.0)
+# GameGen Plugin Auto-Updater (Improved v3.4.2)
 # ---------------------------
 # Pulls the latest files from GitHub, terminates Steam, applies update, and restarts.
 
