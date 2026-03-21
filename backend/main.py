@@ -433,41 +433,7 @@ class Plugin:
         except Exception as e:
             print(f"[GameGen] frontend loaded exception: {e}")
 
-    def _write_acf(self, z: "zipfile.ZipFile", name: str, pure_name: str, steamapps_dir: str) -> bool:
-        try:
-            acf_data = z.read(name)
-            out_path = os.path.join(steamapps_dir, pure_name)
-            with open(out_path, "wb") as f:
-                f.write(acf_data)
-            self._log_debug(f"DEBUG: ✅ Success Extract ACF -> {out_path}")
-            return True
-        except Exception as e:
-            self._log_debug(f"DEBUG: ❌ FAIL Extract ACF {pure_name}: {e}")
-            return False
 
-    def _write_manifest(self, z: "zipfile.ZipFile", name: str, pure_name: str, depotcache_dir: str) -> bool:
-        try:
-            m_data = z.read(name)
-            out_path = os.path.join(depotcache_dir, pure_name)
-            with open(out_path, "wb") as f:
-                f.write(m_data)
-            self._log_debug(f"DEBUG: ✅ Success Extract Manifest -> {out_path}")
-            return True
-        except Exception as e:
-            self._log_debug(f"DEBUG: ❌ FAIL Extract Manifest {pure_name}: {e}")
-            return False
-
-    def _write_lua(self, z: "zipfile.ZipFile", name: str, pure_name: str, app_id_str: str, stplugin_dir: str) -> bool:
-        try:
-            lua_data = z.read(name)
-            dest_lua = os.path.join(stplugin_dir, f"{app_id_str}.lua")
-            with open(dest_lua, "wb") as lf:
-                lf.write(lua_data)
-            self._log_debug(f"DEBUG: ✅ Success Extract LUA -> {dest_lua}")
-            return True
-        except Exception as e:
-            self._log_debug(f"DEBUG: ❌ FAIL Extract LUA {pure_name}: {e}")
-            return False
 
     def _extract_zip_contents(self, zip_data: bytes, app_id_str: str, game_target_dir: str, steamapps_dir: str):
         """ Extract ZIP to temp folder first, then precisely move metadata to Steam folders """
@@ -495,43 +461,31 @@ class Plugin:
                     for file in files:
                         file_path = os.path.join(root, file)
                         rel_path = os.path.relpath(file_path, extract_root)
-                        
                         # Strip common GitHub root if exists
-                        if '/' in rel_path or '\\' in rel_path:
-                            parts = rel_path.replace('\\', '/').split('/')
-                            # If first part looks like a repo root (e.g. game-main), we might want to skip it?
-                            # But here we want the files wherever they are.
+                        parts = rel_path.replace('\\', '/').split('/')
                         
                         pure_name = file.lower()
                         
-                        # 1. ACF -> steamapps
-                        if pure_name.endswith(".acf") and (pure_name.startswith("appmanifest_") or app_id_str in pure_name):
-                            dest = os.path.join(steamapps_dir, file)
+                        # 1. ACF -> steamapps (Force strict naming)
+                        if pure_name.endswith(".acf"):
+                            dest = os.path.join(steamapps_dir, f"appmanifest_{app_id_str}.acf")
                             shutil.copy2(file_path, dest)
                             self._log_debug(f"DEBUG: Moved ACF to {dest}")
                         
-                        # 2. Manifest -> depotcache
+                        # 2. Manifest -> depotcache (Force strict naming)
                         elif pure_name.endswith(".manifest"):
-                            dest = os.path.join(depotcache_dir, file)
+                            dest = os.path.join(depotcache_dir, f"{app_id_str}.manifest")
                             shutil.copy2(file_path, dest)
                             self._log_debug(f"DEBUG: Moved Manifest to {dest}")
                             
-                        # 3. Lua -> config/stplug-in
+                        # 3. Lua -> config/stplug-in (Force strict naming, no skipping)
                         elif pure_name.endswith(".lua"):
-                            self._log_debug(f"DEBUG: IDENTIFIED Potential LUA file: {pure_name}")
-                            # Logic to match correct lua script
-                            is_match = (app_id_str in pure_name) or (len(files) == 1) or ("script" in pure_name)
-                            if is_match:
-                                # We rename it to {app_id}.lua for consistency in stplug-in
-                                dest = os.path.join(stplugin_dir, f"{app_id_str}.lua")
-                                shutil.copy2(file_path, dest)
-                                self._log_debug(f"DEBUG: ✅ Success Moved LUA -> {dest}")
-                            else:
-                                self._log_debug(f"DEBUG: ⏭️ Skipping LUA (no AppID match): {pure_name}")
+                            dest = os.path.join(stplugin_dir, f"{app_id_str}.lua")
+                            shutil.copy2(file_path, dest)
+                            self._log_debug(f"DEBUG: ✅ Success Moved LUA -> {dest}")
                         
                         # 4. Everything else -> game content dir
                         else:
-                            parts = rel_path.replace('\\', '/').split('/')
                             if len(parts) > 1:
                                 # Remove the root folder name
                                 parts.pop(0)
@@ -684,10 +638,19 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
             
         m = result.get("manifest", {})
         game_name = m.get("name") or result.get("name") or f"App {app_id_str}"
-        download_url = m.get("downloadUrl") or m.get("download_url") or m.get("url") or m.get("fileUrl")
         
-        # New ZIP logic
+        # DEBUG: Show what the API provided
+        plugin._log_debug(f"DEBUG: API result keys: {list(result.keys())}")
+        plugin._log_debug(f"DEBUG: API manifest keys: {list(m.keys())}")
+        
+        # Detection of all potential URLs from API
+        acf_dl_url = m.get("acfUrl") or m.get("acf_url") or m.get("downloadUrl") or m.get("download_url") or m.get("url")
+        manifest_dl_url = m.get("manifestUrl") or m.get("manifest_url")
+        lua_dl_url = m.get("luaUrl") or m.get("lua_url")
         zip_url = result.get("zipUrl") or result.get("zip_url") or m.get("zipUrl") or m.get("zip_url") or result.get("content_url")
+        
+        plugin._log_debug(f"DEBUG: URLs detected - ACF: {acf_dl_url is not None}, Manifest: {manifest_dl_url is not None}, Lua: {lua_dl_url is not None}, ZIP: {zip_url is not None}")
+        
         installdir = m.get("installdir") or m.get("install_dir") or game_name
         
         manifest_installed = False
@@ -713,10 +676,7 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 result["_zip_error"] = str(e)
 
         # 2. Singular Manifest / Script Downloads
-        # Support both consolidated and granular URLs
-        acf_dl_url = m.get("acfUrl") or m.get("acf_url") or download_url
-        manifest_dl_url = m.get("manifestUrl") or m.get("manifest_url")
-        lua_dl_url = m.get("luaUrl") or m.get("lua_url")
+
 
         if acf_dl_url or manifest_dl_url or lua_dl_url:
             try:
