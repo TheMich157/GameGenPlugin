@@ -644,14 +644,14 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
         plugin._log_debug(f"DEBUG: API manifest keys: {list(m.keys())}")
         
         # Detection of all potential URLs from API
-        acf_dl_url = m.get("acfUrl") or m.get("acf_url") or m.get("downloadUrl") or m.get("download_url") or m.get("url")
+        acf_dl_url = m.get("acfUrl") or m.get("acf_url")
         manifest_dl_url = m.get("manifestUrl") or m.get("manifest_url")
         lua_dl_url = m.get("luaUrl") or m.get("lua_url")
-        zip_url = result.get("zipUrl") or result.get("zip_url") or m.get("zipUrl") or m.get("zip_url") or result.get("content_url")
+        zip_url = result.get("zipUrl") or result.get("zip_url") or m.get("zipUrl") or m.get("zip_url") or result.get("content_url") or m.get("downloadUrl") or m.get("download_url") or m.get("url")
         
         plugin._log_debug(f"DEBUG: URLs detected - ACF: {acf_dl_url is not None}, Manifest: {manifest_dl_url is not None}, Lua: {lua_dl_url is not None}, ZIP: {zip_url is not None}")
         
-        installdir = m.get("installdir") or m.get("install_dir") or game_name
+        installdir = app_id_str
         
         manifest_installed = False
         zip_installed = False
