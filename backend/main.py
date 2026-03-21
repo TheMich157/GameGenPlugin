@@ -225,11 +225,29 @@ class Plugin:
     def _download_update(self, url: str):
         plugin_dir = self._get_plugin_dir()
         target = os.path.join(plugin_dir, "update_pending.zip")
-        headers = {"User-Agent": "GameGen-Plugin-Updater"}
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        data = self._download_with_retry(url, timeout=60)
+        if data:
             with open(target, 'wb') as f:
-                f.write(resp.read())
+                f.write(data)
+
+    def _download_with_retry(self, url: str, timeout: int = 30, retries: int = 3) -> Optional[bytes]:
+        """ Helper for robust downloads with retries for IncompleteRead etc. """
+        import time
+        import http.client
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GameGen-Plugin"}
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = resp.read()
+                    if data: return data
+            except (urllib.error.URLError, ConnectionError, http.client.IncompleteRead, Exception) as e:
+                self._log_debug(f"Download attempt {attempt+1} failed for {url}: {e}")
+                if attempt < retries - 1:
+                    time.sleep(1.5)
+                else:
+                    return None
+        return None
 
     def _get_history(self) -> list[dict[str, Any]]:
         if not self.history_path or not os.path.exists(self.history_path):
@@ -444,14 +462,14 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 os.makedirs(os.path.dirname(paths["manifest_path"]), exist_ok=True)
                 os.makedirs(os.path.dirname(paths["lua_path"]), exist_ok=True)
                 
-                dl_req = urllib.request.Request(download_url)
-                dl_req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                with urllib.request.urlopen(dl_req, timeout=30) as resp:
-                    data = resp.read()
-                    
+                data = plugin._download_with_retry(download_url, timeout=30)
+                
+                if data is not None:
                     # Store main .acf for Steam discovery
                     with open(acf_path, 'wb') as f:
                         f.write(data)
+                else:
+                    raise Exception("Manifest download failed (empty or interrupted).")
                     
                     # We no longer redundantly write .acf data to .manifest or .lua paths,
                     # as we now extract those from the ZIP if available (matching ltsteamplugin).
@@ -471,11 +489,9 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 
                 plugin._log_debug(f"Downloading ZIP: {zip_url}")
                 
-                zip_req = urllib.request.Request(zip_url)
-                zip_req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                zip_data = plugin._download_with_retry(zip_url, timeout=60)
                 
-                with urllib.request.urlopen(zip_req, timeout=60) as resp:
-                    zip_data = resp.read()
+                if zip_data:
                     with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
                         z.extractall(game_target_dir)
                         
