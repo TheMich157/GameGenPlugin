@@ -516,15 +516,18 @@ class Plugin:
                             shutil.copy2(file_path, dest)
                             self._log_debug(f"DEBUG: Moved Manifest to {dest}")
                             
-                        # 3. Lua -> config/st-plugin
+                        # 3. Lua -> config/stplug-in
                         elif pure_name.endswith(".lua"):
+                            self._log_debug(f"DEBUG: IDENTIFIED Potential LUA file: {pure_name}")
                             # Logic to match correct lua script
                             is_match = (app_id_str in pure_name) or (len(files) == 1) or ("script" in pure_name)
                             if is_match:
-                                # We rename it to {app_id}.lua for consistency in st-plugin
+                                # We rename it to {app_id}.lua for consistency in stplug-in
                                 dest = os.path.join(stplugin_dir, f"{app_id_str}.lua")
                                 shutil.copy2(file_path, dest)
-                                self._log_debug(f"DEBUG: Moved LUA to {dest}")
+                                self._log_debug(f"DEBUG: ✅ Success Moved LUA -> {dest}")
+                            else:
+                                self._log_debug(f"DEBUG: ⏭️ Skipping LUA (no AppID match): {pure_name}")
                         
                         # 4. Everything else -> game content dir
                         else:
@@ -724,6 +727,7 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 
                 # A. ACF
                 if acf_dl_url:
+                    plugin._log_debug(f"DEBUG: Downloading standalone ACF from {acf_dl_url}")
                     data = plugin._download_with_retry(acf_dl_url, timeout=30)
                     if data:
                         with open(acf_path, 'wb') as f:
@@ -741,11 +745,14 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
 
                 # C. Lua
                 if lua_dl_url:
+                    plugin._log_debug(f"DEBUG: Downloading standalone LUA from {lua_dl_url}")
                     l_data = plugin._download_with_retry(lua_dl_url, timeout=30)
                     if l_data:
                         with open(paths["lua_path"], 'wb') as f:
                             f.write(l_data)
-                        plugin._log_debug(f"Successfully saved .lua for {app_id_str}")
+                        plugin._log_debug(f"DEBUG: ✅ Successfully saved .lua for {app_id_str} to {paths['lua_path']}")
+                    else:
+                        plugin._log_debug(f"DEBUG: ❌ Standalone LUA download returned empty data.")
 
             except Exception as e:
                 plugin._log_debug(f"Granular manifest download failed for {app_id_str}: {e}")
