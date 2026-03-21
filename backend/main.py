@@ -640,8 +640,19 @@ def uninstall_manifest(app_id: str, contentScriptQuery: str = "") -> str:
 
 def update_plugin(contentScriptQuery: str = "") -> str:
     try:
-        msg = plugin._check_for_updates(manual=True)
-        return json.dumps({"success": True, "message": msg or "Checking for updates..."})
+        import subprocess
+        plugin_dir = plugin._get_plugin_dir()
+        script_path = os.path.join(plugin_dir, "update_plugin.ps1")
+        
+        if os.path.exists(script_path):
+            print(f"[GameGen] Updating plugin via fixed script: {script_path}")
+            # Run PowerShell script without waiting (using 0x08000000 which is CREATE_NO_WINDOW on Windows)
+            subprocess.Popen(["powershell.exe", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script_path], 
+                             creationflags=0x08000000)
+            return json.dumps({"success": True, "message": "Manual update started. Steam will restart shortly."})
+        else:
+            msg = plugin._check_for_updates(manual=True)
+            return json.dumps({"success": True, "message": msg or "Checking for updates..."})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 

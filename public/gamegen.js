@@ -8,6 +8,7 @@
     let uiInjected = false;
     let apiKeySet = false;
     let currentTab = 'generator';
+    const VERSION = '3.4.0';
 
     // -- Utilities --
 
@@ -325,7 +326,7 @@
             <div class="gamegen-header">
                 <div class="gamegen-title-container">
                     <div class="gamegen-logo">✨</div>
-                    <h1 class="gamegen-title">GAMEGEN <span style="font-size: 10px; color: var(--gg-text-dim); opacity: 0.5;">v3.3.0</span></h1>
+                    <h1 class="gamegen-title">GAMEGEN <span style="font-size: 10px; color: var(--gg-text-dim); opacity: 0.5;">v${VERSION}</span></h1>
                 </div>
             </div>
 
@@ -378,7 +379,7 @@
                     
                     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
                         <span class="section-label">Maintenance</span>
-                        <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version v3.3.0 · Pull latest changes from GitHub.</p>
+                        <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version v${VERSION} · Pull latest changes from GitHub.</p>
                         <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin">Check for Updates</button>
                     </div>
 
@@ -399,12 +400,6 @@
         document.getElementById('gg-gen-btn').onclick = () => {
             const id = document.getElementById('gg-app-id-input').value.trim();
             if (id) App.generate(id, document.getElementById('gg-gen-btn'));
-            else createToast("Enter an AppID", "error");
-        };
-
-        document.getElementById('gg-req-btn').onclick = () => {
-            const id = document.getElementById('gg-app-id-input').value.trim();
-            if (id) App.request(id, document.getElementById('gg-req-btn'));
             else createToast("Enter an AppID", "error");
         };
 
