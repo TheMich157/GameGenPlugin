@@ -46,7 +46,6 @@ if (-not (Test-Path $pluginsDir)) {
     Start-Process -FilePath $installerPath -Wait -PassThru | Out-Null
     
     # Re-check after installation closes
-    # Steam often re-creates plugins/ when Millenium finishes
     if (-not (Test-Path $pluginsDir)) {
         Write-Host "Installation cancelled or failed. Steam\plugins directory still missing." -ForegroundColor Red
         Write-Host "Aborting GameGen installation." -ForegroundColor Red

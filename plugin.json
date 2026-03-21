@@ -2,9 +2,9 @@
 	"$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
 
 	"name": "gamegen",
-	"common_name": "GameGen Manifest Generator",
-	"version": "3.5.0",
-	"description": "A powerful plugin for generating Steam game manifests using GameGen API. Fast, reliable, and easy to use.",
+	"common_name": "GameGen Plugin",
+	"version": "4.0.0",
+	"description": "A powerful plugin for generating Steam game manifests using GameGen API. https://gamegen.lol",
 	"include": [
 		"public"
 	]	

@@ -8,7 +8,7 @@
     let uiInjected = false;
     let apiKeySet = false;
     let currentTab = 'generator';
-    const VERSION = '3.5.0';
+    const VERSION = '4.0.0';
     
     let settings = {
         api_key: '',
