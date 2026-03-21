@@ -395,6 +395,7 @@
         return match ? match[1] : null;
     }
 
+    let isInjecting = false;
     async function injectStoreUI() {
         const appId = getStoreAppId();
         if (!appId) {
@@ -407,63 +408,73 @@
         const launcher = document.getElementById('gamegen-launcher-btn');
         if (launcher) launcher.style.display = 'none';
 
-        // Robust duplicate prevention: Clean all prior instances
-        document.querySelectorAll('#gg-store-inject').forEach(el => el.remove());
+        // Critical Race Condition Lock
+        if (isInjecting) return;
+        isInjecting = true;
 
-        // Try primary prominent locations first, then fall back
-        const target = document.querySelector('.add_to_wishlist_area') || 
-                       document.querySelector('.queue_actions_ctn') ||
-                       document.querySelector('.apphub_OtherSiteInfo');
-                       
-        if (target) {
-            // Check if already installed
-            const status = await safeCall('check_manifest_exists', { app_id: appId });
-            const isInstalled = status?.exists;
+        try {
+            // Clean prior instances
+            document.querySelectorAll('#gg-store-inject').forEach(el => el.remove());
 
-            const div = document.createElement('div');
-            div.id = 'gg-store-inject';
-            // Add margin for cleaner spacing depending on parent
-            div.style.margin = '10px 0';
-            div.style.display = 'block';
-            div.style.width = '100%';
-            
-            if (isInstalled) {
-                div.innerHTML = `
-                    <a class="gg-store-btn remove btnv6_red_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
-                        <span>🗑️</span>
-                        <span style="color: white; font-weight: 700;">Remove Game</span>
-                    </a>
-                `;
-            } else {
-                div.innerHTML = `
-                    <a class="gg-store-btn btnv6_blue_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
-                        <span>✨</span>
-                        <span style="color: white; font-weight: 700;">Add to GameGen</span>
-                    </a>
-                `;
-            }
+            // Try primary prominent locations first, then fall back
+            const target = document.querySelector('.add_to_wishlist_area') || 
+                           document.querySelector('.queue_actions_ctn') ||
+                           document.querySelector('.apphub_OtherSiteInfo');
+                           
+            if (target) {
+                // Check if already installed (This is async and causes race conditions without the lock above)
+                const status = await safeCall('check_manifest_exists', { app_id: appId });
+                const isInstalled = status?.exists;
 
-            div.onclick = async (e) => {
-                e.preventDefault();
-                const btn = div.querySelector('a');
-                if (btn.classList.contains('remove')) {
-                    const res = await safeCall('uninstall_manifest', { app_id: appId });
-                    if (res && res.success) {
-                        createToast("Manifest removed! Restart Steam.", 'success', 'Restart Now', () => safeCall('restart_steam'));
-                        injectStoreUI(); // Refresh UI
-                    }
-                } else if (btn.classList.contains('restart')) {
-                    safeCall('restart_steam');
+                // Double check if someone else injected while we were waiting for safeCall
+                if (document.getElementById('gg-store-inject')) return;
+
+                const div = document.createElement('div');
+                div.id = 'gg-store-inject';
+                div.style.margin = '10px 0';
+                div.style.display = 'block';
+                div.style.width = '100%';
+                
+                if (isInstalled) {
+                    div.innerHTML = `
+                        <a class="gg-store-btn remove btnv6_red_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
+                            <span>🗑️</span>
+                            <span style="color: white; font-weight: 700;">Remove Game</span>
+                        </a>
+                    `;
                 } else {
-                    App.generate(appId, btn);
+                    div.innerHTML = `
+                        <a class="gg-store-btn btnv6_blue_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
+                            <span>✨</span>
+                            <span style="color: white; font-weight: 700;">Add to GameGen</span>
+                        </a>
+                    `;
                 }
-            };
-            
-            if (target.classList.contains('add_to_wishlist_area')) {
-                target.appendChild(div);
-            } else {
-                target.prepend(div);
+
+                div.onclick = async (e) => {
+                    e.preventDefault();
+                    const btn = div.querySelector('a');
+                    if (btn.classList.contains('remove')) {
+                        const res = await safeCall('uninstall_manifest', { app_id: appId });
+                        if (res && res.success) {
+                            createToast("Manifest removed! Restart Steam.", 'success', 'Restart Now', () => safeCall('restart_steam'));
+                            injectStoreUI(); // Refresh UI
+                        }
+                    } else if (btn.classList.contains('restart')) {
+                        safeCall('restart_steam');
+                    } else {
+                        App.generate(appId, btn);
+                    }
+                };
+                
+                if (target.classList.contains('add_to_wishlist_area')) {
+                    target.appendChild(div);
+                } else {
+                    target.prepend(div);
+                }
             }
+        } finally {
+            isInjecting = false;
         }
     }
 
