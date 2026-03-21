@@ -3,7 +3,7 @@
 
 	"name": "gamegen",
 	"common_name": "GameGen Manifest Generator",
-	"version": "3.4.5",
+	"version": "3.4.6",
 	"description": "A powerful plugin for generating Steam game manifests using GameGen API. Fast, reliable, and easy to use.",
 	"include": [
 		"public"

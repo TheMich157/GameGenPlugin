@@ -1,4 +1,4 @@
-# GameGen Plugin Auto-Updater (Improved v3.4.5)
+# GameGen Plugin Auto-Updater (Improved v3.4.6)
 # ---------------------------
 # Pulls the latest files from GitHub, terminates Steam, applies update, and restarts.
 
@@ -14,7 +14,7 @@ Write-Host "2. Extracting files..." -ForegroundColor Cyan
 Expand-Archive -Path $tempZip -DestinationPath $tempFolder -Force
 
 # Locate the extracted folder (GitHub adds the branch/repo name to the folder)
-$extractedSource = Get-ChildItem -Path $tempFolder | Select-Object -ExpandProperty FullName
+$extractedSource = Get-ChildItem -Path $tempFolder | Where-Object { $_.PSIsContainer } | Select-Object -ExpandProperty FullName -First 1
 
 if (Test-Path $extractedSource) {
     Write-Host "3. Stopping Steam..." -ForegroundColor Yellow
@@ -47,8 +47,8 @@ if (Test-Path $extractedSource) {
 
     # Install update by copying contents of extracted source (excluding config.json)
     Write-Host "Copying new files from $extractedSource..." -ForegroundColor Gray
-    # Filter out config.json to ensure local user config is never overwritten by the update
-    Get-ChildItem -Path $extractedSource | Where-Object { $_.Name -ne "config.json" } | ForEach-Object {
+    # Filter out config.json and use wildcard to copy contents directly into $currentPath
+    Get-ChildItem -Path "$extractedSource\*" | Where-Object { $_.Name -ne "config.json" } | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $currentPath -Recurse -Force
     }
     

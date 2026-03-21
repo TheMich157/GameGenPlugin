@@ -10,7 +10,7 @@ import datetime
 import zipfile
 import time
 import io
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import Millennium # type: ignore
 
 try:
@@ -24,7 +24,7 @@ _LAST_UPDATE_MESSAGE = ""
 
 GAMEGEN_BASE_URL = "https://gamegen.lol/api"
 DEFAULT_API_KEY = ""
-VERSION = "3.4.2"
+VERSION = "3.4.6"
 REPO_OWNER = "TheMich157"
 REPO_NAME = "GameGenPlugin"
 UPDATE_CHECK_INTERVAL = 3600 * 2 # 2 hours
@@ -79,7 +79,7 @@ class Plugin:
             pass
             
         # 3. Last resort fallback
-        return os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _log_debug(self, message: str):
         try:
@@ -141,10 +141,9 @@ class Plugin:
             self._init_debug_log()
             
             plugin_dir = self._get_plugin_dir()
-            self.config_path = os.path.join(plugin_dir, "config.json")
-            self.history_path = os.path.join(plugin_dir, "history.json")
-            
-            self._init_debug_log()
+            self.config_path = os.path.abspath(os.path.join(plugin_dir, "config.json"))
+            self.history_path = os.path.abspath(os.path.join(plugin_dir, "history.json"))
+            self._log_debug(f"DEBUG: Paths initialized - Config: {self.config_path}, History: {self.history_path}")
             
             # Apply any pending updates first
             msg = self._apply_pending_update()
@@ -257,11 +256,23 @@ class Plugin:
         if data:
             try:
                 with zipfile.ZipFile(io.BytesIO(data)) as z:
-                    z.extractall(plugin_dir)
-                self._log_debug("Update extracted directly to plugin dir.")
+                    # Strip the leading directory (GitHub style)
+                    for member in z.infolist():
+                        filename = str(member.filename)
+                        if '/' in filename:
+                            # Strip the first part of the path (the repo folder)
+                            prefix, rest = filename.split('/', 1)
+                            member.filename = rest
+                            
+                        if not member.filename:
+                            continue
+                            
+                        z.extract(member, plugin_dir)
+                                
+                self._log_debug(f"Update applied to {plugin_dir}")
                 return True
             except Exception as e:
-                self._log_debug(f"Direct update extraction failed: {e}")
+                self._log_debug(f"Update apply error: {e}")
         return False
 
     def _download_with_retry(self, url: str, timeout: int = 30, retries: int = 3) -> Optional[bytes]:
@@ -283,7 +294,7 @@ class Plugin:
                     return None
         return None
 
-    def _get_history(self) -> list[dict[str, Any]]:
+    def _get_history(self) -> List[Dict[str, Any]]:
         if not self.history_path or not os.path.exists(self.history_path):
             return []
         try:
@@ -344,7 +355,7 @@ class Plugin:
                 stack.append(new_dict)
         return data
 
-    def _get_library_folders(self) -> list[str]:
+    def _get_library_folders(self) -> List[str]:
         """Get all Steam library folders by parsing libraryfolders.vdf."""
         libraries = []
         try:
@@ -369,7 +380,7 @@ class Plugin:
             
         return libraries
 
-    def _find_app_paths(self, app_id: str) -> dict[str, Any]:
+    def _find_app_paths(self, app_id: str) -> Dict[str, Any]:
         """Find where an app is installed among all libraries."""
         app_id_str = str(app_id).strip()
         libraries = self._get_library_folders()
@@ -488,20 +499,19 @@ class Plugin:
 
                     # C. Extract LUA scripts (lenient search)
                     if pure_name.endswith(".lua"):
-                        self._log_debug(f"DEBUG: IDENTIFIED LUA inside Zip: {name}")
+                        self._log_debug(f"IDENTIFIED LUA inside Zip: {name}")
                         is_match = (pure_name == f"{app_id_str}.lua") or (len([n for n in names if n.lower().endswith(".lua")]) == 1)
                         if is_match or "script" in pure_name.lower():
-                            self._log_debug(f"DEBUG: CHOSEN LUA candidate: {pure_name}")
+                            self._log_debug(f"CHOSEN LUA candidate: {pure_name}")
                             self._write_lua(z, name, pure_name, app_id_str, stplugin_dir)
 
-                self._log_debug("DEBUG: EXTRACTION COMPLETE - see per-file results above.")
+                self._log_debug("Extraction process finished.")
         except Exception as e:
-            self._log_debug(f"DEBUG: 🛑 ZIP EXTRACTION GLOBAL INTERRUPT: {e}")
-        print("[GameGen] plugin unloaded.")
+            self._log_debug(f"🛑 ZIP EXTRACTION GLOBAL INTERRUPT: {e}")
 
 plugin = Plugin()
 
-def _make_request(url: str, method: str = "GET", body: dict | None = None) -> dict:
+def _make_request(url: str, method: str = "GET", body: Optional[Dict] = None) -> Dict:
     req = urllib.request.Request(url, method=method)
     req.add_header('User-Agent', f'GameGen-Millennium-Plugin/{VERSION}')
     req.add_header('Content-Type', 'application/json')
@@ -526,10 +536,12 @@ def _make_request(url: str, method: str = "GET", body: dict | None = None) -> di
 
 def set_api_key(key: str, contentScriptQuery: str = "") -> str:
     try:
+        plugin._log_debug(f"DEBUG: set_api_key called with length {len(key)}")
         plugin.api_key = key
         save_config()
         return json.dumps({"success": True})
     except Exception as e:
+        plugin._log_debug(f"DEBUG: set_api_key error: {e}")
         return json.dumps({"success": False, "error": str(e)})
 
 def update_settings(settings: Any = None, **kwargs) -> str:
@@ -590,26 +602,26 @@ def get_settings(contentScriptQuery: str = "") -> str:
 def save_config():
     try:
         if not plugin.config_path:
-            # Emergency path recovery
-            dir = plugin._get_plugin_dir()
-            plugin.config_path = os.path.join(dir, "config.json")
+            p_dir = plugin._get_plugin_dir()
+            plugin.config_path = os.path.abspath(os.path.join(p_dir, "config.json"))
             
-        plugin._log_debug(f"DEBUG: Saving config to {plugin.config_path}")
+        data_to_save = {
+            "api_key": plugin.api_key,
+            "auto_restart_steam": plugin.auto_restart_steam,
+            "beta_updates": plugin.beta_updates,
+            "debug_logging": plugin.debug_logging,
+            "notification_duration": plugin.notification_duration
+        }
+        plugin._log_debug(f"DEBUG: Writing config to {plugin.config_path} with data: {data_to_save}")
         
         with open(plugin.config_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "api_key": plugin.api_key,
-                "auto_restart_steam": plugin.auto_restart_steam,
-                "beta_updates": plugin.beta_updates,
-                "debug_logging": plugin.debug_logging,
-                "notification_duration": plugin.notification_duration
-            }, f, indent=4)
+            json.dump(data_to_save, f, indent=4)
+        plugin._log_debug("DEBUG: Config saved successfully.")
     except Exception as e:
         plugin._log_debug(f"FAILED TO SAVE CONFIG: {e}")
         raise e
 
-import zipfile
-import io
+
 
 def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
     try:
