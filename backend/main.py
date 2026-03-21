@@ -33,6 +33,17 @@ class Plugin:
         # 3. Last resort fallback
         return os.path.dirname(os.path.abspath(__file__))
 
+    def _log_debug(self, message: str):
+        try:
+            plugin_dir = self._get_plugin_dir()
+            debug_path = os.path.join(plugin_dir, "debug.txt")
+            import datetime
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(debug_path, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {message}\n")
+        except:
+            pass
+
     def _inject_webkit_files(self):
         try:
             plugin_dir = self._get_plugin_dir()
@@ -41,8 +52,7 @@ class Plugin:
             css_src = os.path.join(plugin_dir, "public", "gamegen.css")
 
             if not os.path.exists(js_src):
-                with open(os.path.join(plugin_dir, "debug.txt"), "a") as f:
-                    f.write(f"CRITICAL: Failed to locate public/gamegen.js inside {plugin_dir}\n")
+                self._log_debug(f"CRITICAL: Failed to locate public/gamegen.js inside {plugin_dir}")
                 return
 
             steam_ui_dir = os.path.join(Millennium.steam_path(), "steamui", "gamegen_ui")
@@ -57,17 +67,10 @@ class Plugin:
                 
             # Millennium expects posix web paths explicitly!
             Millennium.add_browser_js("gamegen_ui/gamegen.js")
-            
-            try:
-                Millennium.add_browser_css("gamegen_ui/gamegen.css")
-            except Exception as e:
-                with open(os.path.join(plugin_dir, "debug.txt"), "a") as f:
-                    f.write(f"add browser css exception: {e}\n")
+            Millennium.add_browser_css("gamegen_ui/gamegen.css")
             print("[GameGen] Injected gamegen webkit natively.")
         except Exception as e:
-            plugin_log_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            with open(os.path.join(plugin_log_dir, "debug.txt"), "a") as f:
-                f.write(f"FAILED TO INJECT: {e}\n")
+            self._log_debug(f"FAILED TO INJECT: {e}")
             print(f"[GameGen] Failed to inject webkit files: {e}")
 
     def _load(self):
@@ -85,11 +88,12 @@ class Plugin:
                         data = json.load(f)
                         self.api_key = data.get("api_key", DEFAULT_API_KEY)
                 except Exception as e:
-                    print(f"[GameGen] Error loading config: {e}")
+                    self._log_debug(f"Error loading config: {e}")
             
             self._inject_webkit_files()
                     
         except Exception as e:
+            self._log_debug(f"init exception: {e}")
             print(f"[GameGen] init exception: {e}")
 
     def _get_history(self) -> list[dict[str, Any]]:
