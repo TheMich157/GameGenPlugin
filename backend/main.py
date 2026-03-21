@@ -9,6 +9,7 @@ import threading
 import datetime
 import zipfile
 import time
+import io
 from typing import Any, Dict, Optional
 import Millennium # type: ignore
 
@@ -23,7 +24,7 @@ _LAST_UPDATE_MESSAGE = ""
 
 GAMEGEN_BASE_URL = "https://gamegen.lol/api"
 DEFAULT_API_KEY = ""
-VERSION = "3.4.0"
+VERSION = "3.4.1"
 REPO_OWNER = "TheMich157"
 REPO_NAME = "GameGenPlugin"
 UPDATE_CHECK_INTERVAL = 3600 * 2 # 2 hours
@@ -340,6 +341,7 @@ class Plugin:
         app_id_str = str(app_id).strip()
         libraries = self._get_library_folders()
         steam_path = self._find_steam_path()
+        self._log_debug(f"DEBUG: Starting path search for AppID {app_id_str}. Library folders: {libraries}")
         
         # User specified system-wide paths
         depotcache_dir = os.path.join(steam_path, "depotcache")
@@ -352,25 +354,29 @@ class Plugin:
         for lib in libraries:
             steamapps = os.path.join(lib, "steamapps")
             acf = os.path.join(steamapps, f"appmanifest_{app_id_str}.acf")
+            self._log_debug(f"DEBUG: Checking {lib} -> ACF: {acf}")
             
             # If any of these exist, the app is "installed" via GameGen
             if os.path.exists(sys_manifest) or os.path.exists(sys_lua) or os.path.exists(acf):
+                self._log_debug(f"DEBUG: Found existing files at {lib}")
                 return {
                     "library_path": lib,
                     "steamapps_path": steamapps,
                     "acf_path": acf,
-                    "manifest_path": sys_manifest, # Path in depotcache
-                    "lua_path": sys_lua,           # Path in config/stplug-in
+                    "manifest_path": sys_manifest,
+                    "lua_path": sys_lua,
                     "exists": True
                 }
                 
         # Default to main library if not found
-        main_lib = Millennium.steam_path()
+        main_lib = self._find_steam_path()
         main_steamapps = os.path.join(main_lib, "steamapps")
+        default_acf = os.path.join(main_steamapps, f"appmanifest_{app_id_str}.acf")
+        self._log_debug(f"DEBUG: No install found. Defaulting to: {default_acf}")
         return {
             "library_path": main_lib,
             "steamapps_path": main_steamapps,
-            "acf_path": os.path.join(main_steamapps, f"appmanifest_{app_id_str}.acf"),
+            "acf_path": default_acf,
             "manifest_path": sys_manifest,
             "lua_path": sys_lua,
             "exists": False
@@ -382,7 +388,82 @@ class Plugin:
         except Exception as e:
             print(f"[GameGen] frontend loaded exception: {e}")
 
-    def _unload(self):
+    def _write_acf(self, z: "zipfile.ZipFile", name: str, pure_name: str, steamapps_dir: str) -> bool:
+        try:
+            acf_data = z.read(name)
+            out_path = os.path.join(steamapps_dir, pure_name)
+            with open(out_path, "wb") as f:
+                f.write(acf_data)
+            self._log_debug(f"DEBUG: ✅ Success Extract ACF -> {out_path}")
+            return True
+        except Exception as e:
+            self._log_debug(f"DEBUG: ❌ FAIL Extract ACF {pure_name}: {e}")
+            return False
+
+    def _write_manifest(self, z: "zipfile.ZipFile", name: str, pure_name: str, depotcache_dir: str) -> bool:
+        try:
+            m_data = z.read(name)
+            out_path = os.path.join(depotcache_dir, pure_name)
+            with open(out_path, "wb") as f:
+                f.write(m_data)
+            self._log_debug(f"DEBUG: ✅ Success Extract Manifest -> {out_path}")
+            return True
+        except Exception as e:
+            self._log_debug(f"DEBUG: ❌ FAIL Extract Manifest {pure_name}: {e}")
+            return False
+
+    def _write_lua(self, z: "zipfile.ZipFile", name: str, pure_name: str, app_id_str: str, stplugin_dir: str) -> bool:
+        try:
+            lua_data = z.read(name)
+            dest_lua = os.path.join(stplugin_dir, f"{app_id_str}.lua")
+            with open(dest_lua, "wb") as lf:
+                lf.write(lua_data)
+            self._log_debug(f"DEBUG: ✅ Success Extract LUA -> {dest_lua}")
+            return True
+        except Exception as e:
+            self._log_debug(f"DEBUG: ❌ FAIL Extract LUA {pure_name}: {e}")
+            return False
+
+    def _extract_zip_contents(self, zip_data: bytes, app_id_str: str, game_target_dir: str, steamapps_dir: str):
+        """ Robustly extract ACF, Manifest, and Lua files from ANY folder inside the ZIP """
+        self._log_debug(f"DEBUG: EXTENSIVE EXTRACTION STARTED for AppID {app_id_str}")
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+                z.extractall(game_target_dir)
+                names = z.namelist()
+                self._log_debug(f"DEBUG: Total files in ZIP: {len(names)}. Full list: {names}")
+
+                steam_path = self._find_steam_path()
+                depotcache_dir = os.path.join(steam_path, "depotcache")
+                stplugin_dir = os.path.join(steam_path, "config", "stplug-in")
+                os.makedirs(depotcache_dir, exist_ok=True)
+                os.makedirs(stplugin_dir, exist_ok=True)
+                self._log_debug(f"DEBUG: Paths - depotcache: {depotcache_dir}, stplug-in: {stplugin_dir}")
+
+                for name in names:
+                    pure_name = os.path.basename(name)
+
+                    # A. Extract ACF files to steamapps (Primary discovery)
+                    if pure_name.startswith("appmanifest_") and pure_name.endswith(".acf"):
+                        self._log_debug(f"DEBUG: IDENTIFIED ACF inside Zip: {name}")
+                        self._write_acf(z, name, pure_name, steamapps_dir)
+
+                    # B. Extract ALL manifest files to depotcache
+                    if pure_name.endswith(".manifest"):
+                        self._log_debug(f"DEBUG: IDENTIFIED MANIFEST inside Zip: {name}")
+                        self._write_manifest(z, name, pure_name, depotcache_dir)
+
+                    # C. Extract LUA scripts (lenient search)
+                    if pure_name.endswith(".lua"):
+                        self._log_debug(f"DEBUG: IDENTIFIED LUA inside Zip: {name}")
+                        is_match = (pure_name == f"{app_id_str}.lua") or (len([n for n in names if n.lower().endswith(".lua")]) == 1)
+                        if is_match or "script" in pure_name.lower():
+                            self._log_debug(f"DEBUG: CHOSEN LUA candidate: {pure_name}")
+                            self._write_lua(z, name, pure_name, app_id_str, stplugin_dir)
+
+                self._log_debug("DEBUG: EXTRACTION COMPLETE - see per-file results above.")
+        except Exception as e:
+            self._log_debug(f"DEBUG: 🛑 ZIP EXTRACTION GLOBAL INTERRUPT: {e}")
         print("[GameGen] plugin unloaded.")
 
 plugin = Plugin()
@@ -490,66 +571,8 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 plugin._log_debug(f"Downloading ZIP: {zip_url}")
                 
                 zip_data = plugin._download_with_retry(zip_url, timeout=60)
-                
                 if zip_data:
-                    with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-                        z.extractall(game_target_dir)
-                        
-                        # Store .lua and .manifest from zip (matching ltsteamplugin behavior)
-                        names = z.namelist()
-                        
-                        # 1. Extract .manifest files to depotcache
-                        try:
-                            depotcache_dir = os.path.join(plugin._find_steam_path(), "depotcache")
-                            os.makedirs(depotcache_dir, exist_ok=True)
-                            for name in names:
-                                if name.lower().endswith(".manifest"):
-                                    pure = os.path.basename(name)
-                                    data = z.read(name)
-                                    out_path = os.path.join(depotcache_dir, pure)
-                                    with open(out_path, "wb") as mf:
-                                        mf.write(data)
-                                    plugin._log_debug(f"Extracted manifest from zip: {pure}")
-                        except Exception as e:
-                            plugin._log_debug(f"Failed to extract manifests from zip: {e}")
-
-                        # 2. Extract and process .lua scripts to config/stplug-in
-                        try:
-                            stplugin_dir = os.path.join(plugin._find_steam_path(), "config", "stplug-in")
-                            os.makedirs(stplugin_dir, exist_ok=True)
-                            
-                            lua_candidates = [n for n in names if re.fullmatch(r"\d+\.lua", os.path.basename(n))]
-                            chosen_lua = None
-                            preferred = f"{app_id_str}.lua"
-                            
-                            for n in lua_candidates:
-                                if os.path.basename(n) == preferred:
-                                    chosen_lua = n
-                                    break
-                            if not chosen_lua and lua_candidates:
-                                chosen_lua = lua_candidates[0]
-                                
-                            if chosen_lua:
-                                lua_data = z.read(chosen_lua)
-                                try:
-                                    text = lua_data.decode("utf-8")
-                                except:
-                                    text = lua_data.decode("utf-8", errors="replace")
-                                    
-                                # Comment out setManifestid calls (ltsteamplugin behavior)
-                                processed_lines = []
-                                for line in text.splitlines(True):
-                                    if re.match(r"^\s*setManifestid\(", line) and not re.match(r"^\s*--", line):
-                                        line = re.sub(r"^(\s*)", r"\1--", line)
-                                    processed_lines.append(line)
-                                
-                                processed_text = "".join(processed_lines)
-                                dest_lua = os.path.join(stplugin_dir, f"{app_id_str}.lua")
-                                with open(dest_lua, "w", encoding="utf-8") as lf:
-                                    lf.write(processed_text)
-                                plugin._log_debug(f"Installed and processed lua script: {dest_lua}")
-                        except Exception as e:
-                            plugin._log_debug(f"Failed to extract/process lua from zip: {e}")
+                    plugin._extract_zip_contents(zip_data, app_id_str, game_target_dir, steamapps_dir)
                 
                 zip_installed = True
                 plugin._log_debug(f"Successfully extracted ZIP for {app_id_str} to {game_target_dir}")
