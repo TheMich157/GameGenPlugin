@@ -41,11 +41,9 @@
 #gamegen-launcher-btn {
     width: 48px;
     height: 48px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, var(--gg-primary) 0%, var(--gg-secondary) 100%);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+    background: transparent;
+    border: none;
+    box-shadow: none;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -54,8 +52,8 @@
 }
 
 #gamegen-launcher-btn:hover {
-    transform: scale(1.08) rotate(3deg);
-    box-shadow: 0 8px 24px var(--gg-primary-glow);
+    transform: scale(1.15) rotate(3deg);
+    filter: drop-shadow(0 8px 16px var(--gg-primary-glow));
 }
 
 #gg-launcher-menu {

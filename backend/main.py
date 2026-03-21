@@ -25,7 +25,7 @@ _LAST_UPDATE_MESSAGE = ""
 
 GAMEGEN_BASE_URL = "https://gamegen.lol/api"
 DEFAULT_API_KEY = ""
-VERSION = "3.4.6"
+VERSION = "3.5.0"
 REPO_OWNER = "TheMich157"
 REPO_NAME = "GameGenPlugin"
 UPDATE_CHECK_INTERVAL = 3600 * 2 # 2 hours
