@@ -390,6 +390,23 @@ def uninstall_manifest(app_id: str, contentScriptQuery: str = "") -> str:
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
+def update_plugin(contentScriptQuery: str = "") -> str:
+    try:
+        import subprocess
+        plugin_dir = plugin._get_plugin_dir()
+        script_path = os.path.join(plugin_dir, "update_plugin.ps1")
+        
+        if os.path.exists(script_path):
+            print(f"[GameGen] Updating plugin via custom script: {script_path}")
+            # Run PowerShell script without waiting (using 0x08000000 which is CREATE_NO_WINDOW on Windows)
+            subprocess.Popen(["powershell.exe", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script_path], 
+                             creationflags=0x08000000)
+            return json.dumps({"success": True, "method": "powershell"})
+        else:
+            return json.dumps({"success": False, "error": "Update script not found."})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
 def restart_steam(contentScriptQuery: str = "") -> str:
     try:
         import subprocess

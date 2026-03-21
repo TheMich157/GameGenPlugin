@@ -331,6 +331,13 @@
                         <input type="password" id="gg-key-input" class="gamegen-input" placeholder="Enter API Key">
                     </div>
                     <button class="gamegen-btn gamegen-btn-primary" id="gg-save-key">Update API Key</button>
+                    
+                    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
+                        <span class="section-label">Maintenance</span>
+                        <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version {VERSION} · Pull latest changes from GitHub.</p>
+                        <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin">Check for Updates</button>
+                    </div>
+
                     <div style="margin-top: 24px; text-align: center;">
                         <a href="https://gamegen.lol" target="_blank" style="color: var(--gg-primary); font-size: 12px; text-decoration: none;">Get a key at gamegen.lol</a>
                     </div>
@@ -374,6 +381,11 @@
             createToast("History cleared");
         };
 
+        document.getElementById('gg-update-plugin').onclick = () => {
+            createToast("Updating from GitHub... Steam will restart.", "info");
+            safeCall('update_plugin');
+        };
+
         // Load Initial State
         const savedKey = localStorage.getItem('gamegen_api_key');
         if (savedKey) {
@@ -397,6 +409,8 @@
 
     let isInjecting = false;
     async function injectStoreUI() {
+        if (isInjecting) return;
+        
         const appId = getStoreAppId();
         if (!appId) {
             const launcher = document.getElementById('gamegen-launcher-btn');
@@ -404,74 +418,81 @@
             return;
         }
 
-        // Hide launcher on store page to avoid clutter
         const launcher = document.getElementById('gamegen-launcher-btn');
         if (launcher) launcher.style.display = 'none';
 
-        // Critical Race Condition Lock
-        if (isInjecting) return;
         isInjecting = true;
-
         try {
-            // Clean prior instances
+            // Priority selectors for the sidebar area
+            const selectors = [
+                '.add_to_wishlist_area', 
+                '.queue_actions_ctn',
+                '#game_area_purchase',
+                '.apphub_OtherSiteInfo'
+            ];
+
+            let target = null;
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el && (el.offsetHeight > 0 || el.offsetWidth > 0)) {
+                    target = el;
+                    break;
+                }
+            }
+
+            if (!target) return;
+
+            // Check if already injected
+            if (target.querySelector('#gg-store-inject')) return;
+            
+            // Clean any orphaned instances
             document.querySelectorAll('#gg-store-inject').forEach(el => el.remove());
 
-            // Try primary prominent locations first, then fall back
-            const target = document.querySelector('.add_to_wishlist_area') || 
-                           document.querySelector('.queue_actions_ctn') ||
-                           document.querySelector('.apphub_OtherSiteInfo');
-                           
-            if (target) {
-                // Check if already installed (This is async and causes race conditions without the lock above)
-                const status = await safeCall('check_manifest_exists', { app_id: appId });
-                const isInstalled = status?.exists;
+            const status = await safeCall('check_manifest_exists', { app_id: appId });
+            const isInstalled = status?.exists;
 
-                // Double check if someone else injected while we were waiting for safeCall
-                if (document.getElementById('gg-store-inject')) return;
+            const div = document.createElement('div');
+            div.id = 'gg-store-inject';
+            div.style.margin = '10px 0';
+            div.style.width = '100%';
+            div.style.display = 'block';
+            
+            if (isInstalled) {
+                div.innerHTML = `
+                    <a class="gg-store-btn remove btnv6_red_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box; display: flex; align-items: center; gap: 8px;">
+                        <span>🗑️</span>
+                        <span style="color: white; font-weight: 700;">Remove Game</span>
+                    </a>
+                `;
+            } else {
+                div.innerHTML = `
+                    <a class="gg-store-btn btnv6_blue_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box; display: flex; align-items: center; gap: 8px;">
+                        <span>✨</span>
+                        <span style="color: white; font-weight: 700;">Add to GameGen</span>
+                    </a>
+                `;
+            }
 
-                const div = document.createElement('div');
-                div.id = 'gg-store-inject';
-                div.style.margin = '10px 0';
-                div.style.display = 'block';
-                div.style.width = '100%';
-                
-                if (isInstalled) {
-                    div.innerHTML = `
-                        <a class="gg-store-btn remove btnv6_red_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
-                            <span>🗑️</span>
-                            <span style="color: white; font-weight: 700;">Remove Game</span>
-                        </a>
-                    `;
-                } else {
-                    div.innerHTML = `
-                        <a class="gg-store-btn btnv6_blue_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box;">
-                            <span>✨</span>
-                            <span style="color: white; font-weight: 700;">Add to GameGen</span>
-                        </a>
-                    `;
-                }
-
-                div.onclick = async (e) => {
-                    e.preventDefault();
-                    const btn = div.querySelector('a');
-                    if (btn.classList.contains('remove')) {
-                        const res = await safeCall('uninstall_manifest', { app_id: appId });
-                        if (res && res.success) {
-                            createToast("Manifest removed! Restart Steam.", 'success', 'Restart Now', () => safeCall('restart_steam'));
-                            injectStoreUI(); // Refresh UI
-                        }
-                    } else if (btn.classList.contains('restart')) {
-                        safeCall('restart_steam');
-                    } else {
-                        App.generate(appId, btn);
+            div.onclick = async (e) => {
+                e.preventDefault();
+                const btn = div.querySelector('a');
+                if (btn.classList.contains('remove')) {
+                    const res = await safeCall('uninstall_manifest', { app_id: appId });
+                    if (res && res.success) {
+                        createToast("Manifest removed! Restart Steam.", 'success', 'Restart Now', () => safeCall('restart_steam'));
+                        injectStoreUI();
                     }
-                };
-                
-                if (target.classList.contains('add_to_wishlist_area')) {
-                    target.appendChild(div);
+                } else if (btn.classList.contains('restart')) {
+                    safeCall('restart_steam');
                 } else {
-                    target.prepend(div);
+                    App.generate(appId, btn);
                 }
+            };
+
+            if (target.id === 'game_area_purchase' || target.classList.contains('add_to_wishlist_area')) {
+                target.prepend(div);
+            } else {
+                target.appendChild(div);
             }
         } finally {
             isInjecting = false;
