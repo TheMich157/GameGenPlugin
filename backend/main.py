@@ -513,13 +513,27 @@ def set_api_key(key: str, contentScriptQuery: str = "") -> str:
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-def update_settings(settings: dict, contentScriptQuery: str = "") -> str:
+def update_settings(settings: Any = None, **kwargs) -> str:
     try:
-        plugin.api_key = settings.get("api_key", plugin.api_key)
-        plugin.auto_restart_steam = settings.get("auto_restart_steam", plugin.auto_restart_steam)
-        plugin.beta_updates = settings.get("beta_updates", plugin.beta_updates)
-        plugin.debug_logging = settings.get("debug_logging", plugin.debug_logging)
-        plugin.notification_duration = int(settings.get("notification_duration", plugin.notification_duration))
+        data = {}
+        if isinstance(settings, dict):
+            data = settings
+        elif kwargs:
+            data = kwargs.get("settings", kwargs)
+            
+        if not data:
+             return json.dumps({"success": False, "error": "No settings data received"})
+
+        plugin.api_key = data.get("api_key", plugin.api_key)
+        plugin.auto_restart_steam = data.get("auto_restart_steam", plugin.auto_restart_steam)
+        plugin.beta_updates = data.get("beta_updates", plugin.beta_updates)
+        plugin.debug_logging = data.get("debug_logging", plugin.debug_logging)
+        
+        duration = data.get("notification_duration", plugin.notification_duration)
+        try:
+            plugin.notification_duration = int(duration)
+        except:
+            pass
         
         save_config()
         return json.dumps({"success": True})
@@ -801,4 +815,10 @@ def get_stats(contentScriptQuery: str = "") -> str:
         })
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "remaining": 0, "limit": "∞"})
+
+# Initialize plugin state on startup
+try:
+    plugin._load()
+except Exception as e:
+    print(f"[GameGen] Failed to auto-initialize: {e}")
 

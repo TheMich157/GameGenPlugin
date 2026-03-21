@@ -1,4 +1,4 @@
-# GameGen Plugin Auto-Updater (Improved v3.4.3)
+# GameGen Plugin Auto-Updater (Improved v3.4.4)
 # ---------------------------
 # Pulls the latest files from GitHub, terminates Steam, applies update, and restarts.
 
@@ -23,27 +23,33 @@ if (Test-Path $extractedSource) {
 
     Write-Host "4. Installing update (clean install)..." -ForegroundColor Green
     
-    # Files/folders to preserve
-    $preserve = @("config.json", "history.json", $MyInvocation.MyCommand.Name, "restart_steam.ps1", ".git")
+    # Logic to locate the plugin folder accurately
+    $steamExe = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamExe").SteamExe
+    if (Test-Path $steamExe) {
+        $steamDir = Split-Path -Path $steamExe -Parent
+        $pluginsDir = Join-Path -Path $steamDir -ChildPath "plugins\GameGenPlugin"
+        if (Test-Path $pluginsDir) {
+           $currentPath = $pluginsDir
+        }
+    }
     
-    # Remove old files/folders except preserved ones
+    # Ensure we are in the GameGenPlugin directory
+    if (-not (Test-Path (Join-Path $currentPath "public\gamegen.js"))) {
+        Write-Host "Warning: Could not localize gamegen.js at $currentPath. Using identified path if possible." -ForegroundColor Yellow
+    }
+
+    # Define files/folders to preserve (only config.json as requested)
+    $preserve = @("config.json")
+    
+    # Remove everything else in current path (except config.json)
+    Write-Host "Clearing old files at $currentPath..." -ForegroundColor Gray
     Get-ChildItem -Path $currentPath | Where-Object { $preserve -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Files/Folders to update
-    $items = Get-ChildItem -Path $extractedSource
-    foreach ($item in $items) {
-        $dest = Join-Path $currentPath $item.Name
-        # Don't overwrite config or history if they somehow made it into the zip (unlikely but safe)
-        if ($preserve -contains $item.Name -and $item.Name -match "config|history") {
-            continue
-        }
-        
-        if ($item.PSIsContainer) {
-            Copy-Item -Path $item.FullName -Destination $currentPath -Recurse -Force
-        } else {
-            Copy-Item -Path $item.FullName -Destination $dest -Force
-        }
-        Write-Host "Updated: $($item.Name)" -ForegroundColor Gray
+    # Install update by copying contents of extracted source (excluding config.json)
+    Write-Host "Copying new files from $extractedSource..." -ForegroundColor Gray
+    # Filter out config.json to ensure local user config is never overwritten by the update
+    Get-ChildItem -Path $extractedSource | Where-Object { $_.Name -ne "config.json" } | ForEach-Object {
+        Copy-Item -Path $_.FullName -Destination $currentPath -Recurse -Force
     }
     
     Write-Host "Update applied!" -ForegroundColor Green
