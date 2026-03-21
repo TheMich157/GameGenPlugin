@@ -486,26 +486,32 @@ class Plugin:
 
                 for name in names:
                     pure_name = os.path.basename(name)
-
+                    
                     # A. Extract ACF files to steamapps (Primary discovery)
-                    if pure_name.startswith("appmanifest_") and pure_name.endswith(".acf"):
+                    is_acf = pure_name.endswith(".acf") and (pure_name.startswith("appmanifest_") or app_id_str in pure_name)
+                    if is_acf:
                         self._log_debug(f"DEBUG: IDENTIFIED ACF inside Zip: {name}")
-                        self._write_acf(z, name, pure_name, steamapps_dir)
+                        if self._write_acf(z, name, pure_name, steamapps_dir):
+                            self._log_debug(f"DEBUG: Saved ACF to {steamapps_dir}")
 
-                    # B. Extract ALL manifest files to depotcache
-                    if pure_name.endswith(".manifest"):
+                    # B. Extract Manifest files to depotcache
+                    is_manifest = pure_name.endswith(".manifest")
+                    if is_manifest:
                         self._log_debug(f"DEBUG: IDENTIFIED MANIFEST inside Zip: {name}")
-                        self._write_manifest(z, name, pure_name, depotcache_dir)
+                        if self._write_manifest(z, name, pure_name, depotcache_dir):
+                            self._log_debug(f"DEBUG: Saved Manifest to {depotcache_dir}")
 
-                    # C. Extract LUA scripts (lenient search)
-                    if pure_name.endswith(".lua"):
-                        self._log_debug(f"IDENTIFIED LUA inside Zip: {name}")
-                        is_match = (pure_name == f"{app_id_str}.lua") or (len([n for n in names if n.lower().endswith(".lua")]) == 1)
-                        if is_match or "script" in pure_name.lower():
-                            self._log_debug(f"CHOSEN LUA candidate: {pure_name}")
-                            self._write_lua(z, name, pure_name, app_id_str, stplugin_dir)
+                    # C. Extract LUA scripts to stplug-in
+                    is_lua = pure_name.endswith(".lua")
+                    if is_lua:
+                        self._log_debug(f"DEBUG: IDENTIFIED LUA inside Zip: {name}")
+                        # If it matches appid or is the only one, or contains "script"
+                        is_match = (app_id_str in pure_name) or (len([n for n in names if n.lower().endswith(".lua")]) == 1) or ("script" in pure_name.lower())
+                        if is_match:
+                            if self._write_lua(z, name, pure_name, app_id_str, stplugin_dir):
+                                self._log_debug(f"DEBUG: Saved LUA to {stplugin_dir}")
 
-                self._log_debug("Extraction process finished.")
+                self._log_debug("DEBUG: Extraction process finished.")
         except Exception as e:
             self._log_debug(f"🛑 ZIP EXTRACTION GLOBAL INTERRUPT: {e}")
 
@@ -654,33 +660,7 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
         manifest_installed = False
         zip_installed = False
 
-        # 1. Manifest / Script Downloads
-        if download_url:
-            try:
-                # Ensure directories exist
-                os.makedirs(steamapps_dir, exist_ok=True)
-                os.makedirs(os.path.dirname(paths["manifest_path"]), exist_ok=True)
-                os.makedirs(os.path.dirname(paths["lua_path"]), exist_ok=True)
-                
-                data = plugin._download_with_retry(download_url, timeout=30)
-                
-                if data is not None:
-                    # Store main .acf for Steam discovery
-                    with open(acf_path, 'wb') as f:
-                        f.write(data)
-                else:
-                    raise Exception("Manifest download failed (empty or interrupted).")
-                    
-                    # We no longer redundantly write .acf data to .manifest or .lua paths,
-                    # as we now extract those from the ZIP if available (matching ltsteamplugin).
-                
-                manifest_installed = True
-                plugin._log_debug(f"Successfully saved manifest files for {app_id_str}")
-            except Exception as e:
-                plugin._log_debug(f"Manifest download failed for {app_id_str}: {e}")
-                result["_manifest_error"] = str(e)
-        
-        # 2. ZIP Processing / Game Content
+        # 1. ZIP Processing / Game Content (contains .lua and .manifest and game files)
         if zip_url:
             try:
                 common_dir = os.path.join(steamapps_dir, "common")
@@ -698,6 +678,48 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
             except Exception as e:
                 plugin._log_debug(f"ZIP extraction failed for {app_id_str}: {e}")
                 result["_zip_error"] = str(e)
+
+        # 2. Singular Manifest / Script Downloads
+        # Support both consolidated and granular URLs
+        acf_dl_url = m.get("acfUrl") or m.get("acf_url") or download_url
+        manifest_dl_url = m.get("manifestUrl") or m.get("manifest_url")
+        lua_dl_url = m.get("luaUrl") or m.get("lua_url")
+
+        if acf_dl_url or manifest_dl_url or lua_dl_url:
+            try:
+                # Ensure directories exist
+                os.makedirs(steamapps_dir, exist_ok=True)
+                os.makedirs(os.path.dirname(paths["manifest_path"]), exist_ok=True)
+                os.makedirs(os.path.dirname(paths["lua_path"]), exist_ok=True)
+                
+                # A. ACF
+                if acf_dl_url:
+                    data = plugin._download_with_retry(acf_dl_url, timeout=30)
+                    if data:
+                        with open(acf_path, 'wb') as f:
+                            f.write(data)
+                        manifest_installed = True
+                        plugin._log_debug(f"Successfully saved .acf for {app_id_str}")
+
+                # B. Manifest
+                if manifest_dl_url:
+                    m_data = plugin._download_with_retry(manifest_dl_url, timeout=30)
+                    if m_data:
+                        with open(paths["manifest_path"], 'wb') as f:
+                            f.write(m_data)
+                        plugin._log_debug(f"Successfully saved .manifest for {app_id_str}")
+
+                # C. Lua
+                if lua_dl_url:
+                    l_data = plugin._download_with_retry(lua_dl_url, timeout=30)
+                    if l_data:
+                        with open(paths["lua_path"], 'wb') as f:
+                            f.write(l_data)
+                        plugin._log_debug(f"Successfully saved .lua for {app_id_str}")
+
+            except Exception as e:
+                plugin._log_debug(f"Granular manifest download failed for {app_id_str}: {e}")
+                result["_manifest_error"] = str(e)
                 
         # Update result and history if something was successful
         if manifest_installed or zip_installed:
