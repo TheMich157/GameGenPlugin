@@ -451,8 +451,6 @@
 
     let isInjecting = false;
     async function injectStoreUI() {
-        if (isInjecting) return;
-        
         const appId = getStoreAppId();
         if (!appId) {
             const launcher = document.getElementById('gamegen-launcher-btn');
@@ -460,66 +458,62 @@
             return;
         }
 
+        // On store pages, we can keep the launcher visible too
         const launcher = document.getElementById('gamegen-launcher-btn');
-        if (launcher) launcher.style.display = 'none';
+        if (launcher) launcher.style.display = 'flex';
 
+        if (isInjecting) return;
         isInjecting = true;
         try {
-            // Priority selectors for the sidebar area
+            // Expanded selectors for more reliability
             const selectors = [
-                '.add_to_wishlist_area', 
-                '.queue_actions_ctn',
+                '.apphub_OtherSiteInfo',
                 '#game_area_purchase',
-                '.apphub_OtherSiteInfo'
+                '.queue_actions_ctn',
+                '.add_to_wishlist_area',
+                '.game_area_already_on_account'
             ];
 
             let target = null;
             for (const sel of selectors) {
                 const el = document.querySelector(sel);
-                if (el && (el.offsetHeight > 0 || el.offsetWidth > 0)) {
+                if (el && el.offsetHeight > 0) {
                     target = el;
                     break;
                 }
             }
 
-            if (!target) return;
-
-            // Ensure no duplicates
-            document.querySelectorAll('#gg-store-inject').forEach(el => el.remove());
-
-            const status = await safeCall('check_manifest_exists', { app_id: appId });
-            const isInstalled = status?.exists;
-
-            // Double check after async call
-            if (document.getElementById('gg-store-inject')) return;
+            if (!target || document.getElementById('gg-store-inject')) return;
 
             const div = document.createElement('div');
             div.id = 'gg-store-inject';
-            div.style.display = 'inline-block';
-            div.style.verticalAlign = 'top';
+            div.style.margin = '10px 0';
             
-            // If we're in the OtherSiteInfo area, we want to match the width/style of those buttons
-            const isInOtherSiteInfo = target.classList.contains('apphub_OtherSiteInfo');
-            
+            // Initial render as "Loading..." or just "Add" to be immediate
+            div.innerHTML = `
+                <a class="gg-store-btn" href="#" style="opacity: 0.7;">
+                    <span>✨</span>
+                    <span>Loading GameGen...</span>
+                </a>
+            `;
+            target.prepend(div);
+
+            // Now do the slow check
+            const status = await safeCall('check_manifest_exists', { app_id: appId });
+            const isInstalled = status?.exists;
+            const btn = div.querySelector('a');
+
             if (isInstalled) {
-                div.innerHTML = `
-                    <a class="btnv6_red_hoverfade btn_medium" href="#" style="padding: 0 15px; height: 30px; line-height: 30px; display: inline-flex; align-items: center; gap: 6px; margin-right: 2px;">
-                        <span>🗑️</span>
-                        <span style="color: white; font-weight: 500; font-size: 12px;">Remove Game</span>
-                    </a>
-                `;
+                btn.className = 'gg-store-btn remove';
+                btn.innerHTML = '<span>🗑️</span><span>Remove Game</span>';
             } else {
-                div.innerHTML = `
-                    <a class="btnv6_blue_hoverfade btn_medium" href="#" style="padding: 0 15px; height: 30px; line-height: 30px; display: inline-flex; align-items: center; gap: 6px; margin-right: 2px;">
-                        <span>✨</span>
-                        <span style="color: white; font-weight: 500; font-size: 12px;">Add to GameGen</span>
-                    </a>
-                `;
+                btn.className = 'gg-store-btn';
+                btn.innerHTML = '<span>✨</span><span>Add to GameGen</span>';
             }
+            btn.style.opacity = '1';
 
             div.onclick = async (e) => {
                 e.preventDefault();
-                const btn = div.querySelector('a');
                 if (btn.classList.contains('remove')) {
                     const res = await safeCall('uninstall_manifest', { app_id: appId });
                     if (res && res.success) {
@@ -532,13 +526,6 @@
                     App.generate(appId, btn);
                 }
             };
-            
-            // Smart Insertion: Prepend to Community Hub area or purchase box for visibility
-            if (isInOtherSiteInfo || target.id === 'game_area_purchase' || target.classList.contains('add_to_wishlist_area')) {
-                target.prepend(div);
-            } else {
-                target.appendChild(div);
-            }
         } finally {
             isInjecting = false;
         }
