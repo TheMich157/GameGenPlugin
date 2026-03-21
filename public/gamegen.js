@@ -8,7 +8,15 @@
     let uiInjected = false;
     let apiKeySet = false;
     let currentTab = 'generator';
-    const VERSION = '3.4.2';
+    const VERSION = '3.4.3';
+    
+    let settings = {
+        api_key: '',
+        auto_restart_steam: false,
+        beta_updates: false,
+        debug_logging: true,
+        notification_duration: 6
+    };
 
     // -- Utilities --
 
@@ -49,11 +57,12 @@
             };
             toast.querySelector('#gg-toast-close-btn').onclick = () => toast.remove();
         } else {
+            const duration = (settings.notification_duration || 6) * 1000;
             setTimeout(() => {
                 toast.style.opacity = '0';
                 toast.style.transform = 'translateY(-20px) scale(0.9)';
                 setTimeout(() => toast.remove(), 500);
-            }, 6000);
+            }, duration);
         }
     }
 
@@ -157,6 +166,10 @@
                 createToast("Request submitted successfully!");
             } else {
                 createToast(res?.error || "Request failed", "error");
+            }
+
+            if (res && res._should_restart) {
+                createToast("Auto-restarting Steam in 2s...", "info");
             }
 
             if (sourceBtn) {
@@ -291,7 +304,11 @@
                     <span>Update Search</span>
                 </button>
             </div>
-            <button id="gamegen-launcher-btn">✨</button>
+            <button id="gamegen-launcher-btn" title="GameGen Manifest Generator">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+            </button>
         `;
         document.body.appendChild(launcherCtn);
 
@@ -325,7 +342,9 @@
         container.innerHTML = `
             <div class="gamegen-header">
                 <div class="gamegen-title-container">
-                    <div class="gamegen-logo">✨</div>
+                    <div class="gamegen-logo">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                    </div>
                     <h1 class="gamegen-title">GAMEGEN <span style="font-size: 10px; color: var(--gg-text-dim); opacity: 0.5;">v${VERSION}</span></h1>
                 </div>
             </div>
@@ -370,21 +389,65 @@
 
                 <!-- Settings -->
                 <div id="gg-section-settings" class="gamegen-section">
-                    <span class="section-label">Authentication</span>
-                    <p style="font-size: 12px; color: var(--gg-text-dim); margin-bottom: 20px;">Your API key is stored locally to authenticate requests with gamegen.lol</p>
+                    <span class="section-label">General Settings</span>
+                    
+                    <div class="gg-settings-group">
+                        <div class="gg-setting-item">
+                            <div class="gg-setting-info">
+                                <div class="gg-setting-title">Auto-Restart Steam</div>
+                                <div class="gg-setting-desc">Instantly relaunch Steam after manifest generation.</div>
+                            </div>
+                            <label class="gg-switch">
+                                <input type="checkbox" id="gg-set-autorestart">
+                                <span class="gg-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="gg-setting-item">
+                            <div class="gg-setting-info">
+                                <div class="gg-setting-title">Beta Releases</div>
+                                <div class="gg-setting-desc">Check for pre-release versions on GitHub.</div>
+                            </div>
+                            <label class="gg-switch">
+                                <input type="checkbox" id="gg-set-beta">
+                                <span class="gg-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="gg-setting-item">
+                            <div class="gg-setting-info">
+                                <div class="gg-setting-title">Detailed Debugging</div>
+                                <div class="gg-setting-desc">Log extra information to debug.txt.</div>
+                            </div>
+                            <label class="gg-switch">
+                                <input type="checkbox" id="gg-set-debug" checked>
+                                <span class="gg-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="gg-setting-item">
+                            <div class="gg-setting-info">
+                                <div class="gg-setting-title">Toast Duration</div>
+                                <div class="gg-setting-desc">Seconds before notifications disappear.</div>
+                            </div>
+                            <input type="number" id="gg-set-duration" class="gamegen-input-small" value="6" min="1" max="60">
+                        </div>
+                    </div>
+
+                    <span class="section-label" style="margin-top: 24px;">Authentication</span>
                     <div class="gamegen-input-wrapper">
                         <input type="password" id="gg-key-input" class="gamegen-input" placeholder="Enter API Key">
+                        <div style="margin-top: 8px; text-align: right;">
+                             <a href="https://gamegen.lol" target="_blank" style="color: var(--gg-primary); font-size: 11px; text-decoration: none;">Get key @ gamegen.lol</a>
+                        </div>
                     </div>
-                    <button class="gamegen-btn gamegen-btn-primary" id="gg-save-key">Update API Key</button>
                     
-                    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
+                    <button class="gamegen-btn gamegen-btn-primary" id="gg-save-settings">Save All Settings</button>
+                    
+                    <div style="margin-top: 32px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
                         <span class="section-label">Maintenance</span>
                         <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version v${VERSION} · Pull latest changes from GitHub.</p>
                         <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin">Check for Updates</button>
-                    </div>
-
-                    <div style="margin-top: 24px; text-align: center;">
-                        <a href="https://gamegen.lol" target="_blank" style="color: var(--gg-primary); font-size: 12px; text-decoration: none;">Get a key at gamegen.lol</a>
                     </div>
                 </div>
             </div>
@@ -403,14 +466,29 @@
             else createToast("Enter an AppID", "error");
         };
 
-        document.getElementById('gg-save-key').onclick = () => {
+        document.getElementById('gg-save-settings').onclick = async () => {
             const key = document.getElementById('gg-key-input').value.trim();
+            const newSettings = {
+                api_key: key,
+                auto_restart_steam: document.getElementById('gg-set-autorestart').checked,
+                beta_updates: document.getElementById('gg-set-beta').checked,
+                debug_logging: document.getElementById('gg-set-debug').checked,
+                notification_duration: parseInt(document.getElementById('gg-set-duration').value) || 6
+            };
+            
+            settings = { ...settings, ...newSettings };
+            
             if (key) {
                 localStorage.setItem('gamegen_api_key', key);
                 apiKeySet = true;
-                safeCall('set_api_key', { key: key });
-                createToast("API Key saved");
+            }
+            
+            const res = await safeCall('update_settings', { settings: newSettings });
+            if (res && res.success) {
+                createToast("Settings saved successfully!");
                 App.switchTab('generator');
+            } else {
+                createToast("Error saving settings", "error");
             }
         };
 
@@ -426,15 +504,35 @@
         };
 
         // Load Initial State
-        const savedKey = localStorage.getItem('gamegen_api_key');
-        if (savedKey) {
-            apiKeySet = true;
-            document.getElementById('gg-key-input').value = savedKey;
-            safeCall('set_api_key', { key: savedKey });
-        } else {
-            App.switchTab('settings');
-            App.toggleUI(true);
-        }
+        (async () => {
+            const serverSettings = await safeCall('get_settings');
+            if (serverSettings) {
+                settings = serverSettings;
+                document.getElementById('gg-key-input').value = settings.api_key || '';
+                document.getElementById('gg-set-autorestart').checked = settings.auto_restart_steam;
+                document.getElementById('gg-set-beta').checked = settings.beta_updates;
+                document.getElementById('gg-set-debug').checked = settings.debug_logging;
+                document.getElementById('gg-set-duration').value = settings.notification_duration;
+                
+                if (settings.api_key) {
+                    apiKeySet = true;
+                } else {
+                    App.switchTab('settings');
+                    App.toggleUI(true);
+                }
+            } else {
+                // Fallback to localStorage for API key only
+                const savedKey = localStorage.getItem('gamegen_api_key');
+                if (savedKey) {
+                    apiKeySet = true;
+                    document.getElementById('gg-key-input').value = savedKey;
+                    settings.api_key = savedKey;
+                } else {
+                    App.switchTab('settings');
+                    App.toggleUI(true);
+                }
+            }
+        })();
         
         // Initial check and periodic poll for background updates
         setTimeout(() => checkPostRestart(), 3000);

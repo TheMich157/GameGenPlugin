@@ -34,6 +34,11 @@ class Plugin:
         self.api_key = DEFAULT_API_KEY
         self.config_path = ""
         self.history_path = ""
+        # New Settings
+        self.auto_restart_steam = False
+        self.beta_updates = False
+        self.debug_logging = True
+        self.notification_duration = 6 # seconds
         
     def _find_steam_path(self) -> str:
        
@@ -138,6 +143,10 @@ class Plugin:
                     with open(self.config_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         self.api_key = data.get("api_key", DEFAULT_API_KEY)
+                        self.auto_restart_steam = data.get("auto_restart_steam", False)
+                        self.beta_updates = data.get("beta_updates", False)
+                        self.debug_logging = data.get("debug_logging", True)
+                        self.notification_duration = data.get("notification_duration", 6)
                 except Exception as e:
                     self._log_debug(f"Error loading config: {e}")
             
@@ -499,12 +508,43 @@ def _make_request(url: str, method: str = "GET", body: dict | None = None) -> di
 def set_api_key(key: str, contentScriptQuery: str = "") -> str:
     try:
         plugin.api_key = key
-        if plugin.config_path:
-            with open(plugin.config_path, "w", encoding="utf-8") as f:
-                json.dump({"api_key": key}, f)
+        save_config()
         return json.dumps({"success": True})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
+
+def update_settings(settings: dict, contentScriptQuery: str = "") -> str:
+    try:
+        plugin.api_key = settings.get("api_key", plugin.api_key)
+        plugin.auto_restart_steam = settings.get("auto_restart_steam", plugin.auto_restart_steam)
+        plugin.beta_updates = settings.get("beta_updates", plugin.beta_updates)
+        plugin.debug_logging = settings.get("debug_logging", plugin.debug_logging)
+        plugin.notification_duration = int(settings.get("notification_duration", plugin.notification_duration))
+        
+        save_config()
+        return json.dumps({"success": True})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def get_settings(contentScriptQuery: str = "") -> str:
+    return json.dumps({
+        "api_key": plugin.api_key,
+        "auto_restart_steam": plugin.auto_restart_steam,
+        "beta_updates": plugin.beta_updates,
+        "debug_logging": plugin.debug_logging,
+        "notification_duration": plugin.notification_duration
+    })
+
+def save_config():
+    if plugin.config_path:
+        with open(plugin.config_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "api_key": plugin.api_key,
+                "auto_restart_steam": plugin.auto_restart_steam,
+                "beta_updates": plugin.beta_updates,
+                "debug_logging": plugin.debug_logging,
+                "notification_duration": plugin.notification_duration
+            }, f)
 
 import zipfile
 import io
@@ -591,8 +631,14 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
             result["_auto_installed"] = manifest_installed
             result["_zip_installed"] = zip_installed
             result["_already_existed"] = already_existed
+            result["_should_restart"] = plugin.auto_restart_steam
             plugin._add_to_history(app_id_str, game_name)
             plugin._log_debug(f"Generation workflow completed for {app_id_str}")
+            
+            if plugin.auto_restart_steam:
+                plugin._log_debug("Auto-restarting Steam as requested by settings.")
+                # We do this in a slight delay to ensure the API response is sent back to UI first
+                threading.Timer(2.0, restart_steam).start()
                 
         return json.dumps(result)
     except Exception as e:

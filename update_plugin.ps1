@@ -1,4 +1,4 @@
-# GameGen Plugin Auto-Updater (Improved v3.4.2)
+# GameGen Plugin Auto-Updater (Improved v3.4.3)
 # ---------------------------
 # Pulls the latest files from GitHub, terminates Steam, applies update, and restarts.
 
@@ -21,12 +21,23 @@ if (Test-Path $extractedSource) {
     Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3 # Wait for it to close
 
-    Write-Host "4. Installing update..." -ForegroundColor Green
+    Write-Host "4. Installing update (clean install)..." -ForegroundColor Green
     
+    # Files/folders to preserve
+    $preserve = @("config.json", "history.json", $MyInvocation.MyCommand.Name, "restart_steam.ps1", ".git")
+    
+    # Remove old files/folders except preserved ones
+    Get-ChildItem -Path $currentPath | Where-Object { $preserve -notcontains $_.Name } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
     # Files/Folders to update
     $items = Get-ChildItem -Path $extractedSource
     foreach ($item in $items) {
         $dest = Join-Path $currentPath $item.Name
+        # Don't overwrite config or history if they somehow made it into the zip (unlikely but safe)
+        if ($preserve -contains $item.Name -and $item.Name -match "config|history") {
+            continue
+        }
+        
         if ($item.PSIsContainer) {
             Copy-Item -Path $item.FullName -Destination $currentPath -Recurse -Force
         } else {
