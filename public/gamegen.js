@@ -8,7 +8,7 @@
     let uiInjected = false;
     let apiKeySet = false;
     let currentTab = 'generator';
-    const VERSION = '3.4.4';
+    const VERSION = '3.4.5';
     
     let settings = {
         api_key: '',
@@ -488,7 +488,7 @@
                 createToast("Settings saved successfully!");
                 App.switchTab('generator');
             } else {
-                createToast("Error saving settings", "error");
+                createToast("Error saving settings: " + (res?.error || "Unknown error"), "error");
             }
         };
 

@@ -1,4 +1,4 @@
-# GameGen Plugin Auto-Updater (Improved v3.4.4)
+# GameGen Plugin Auto-Updater (Improved v3.4.5)
 # ---------------------------
 # Pulls the latest files from GitHub, terminates Steam, applies update, and restarts.
 
@@ -38,8 +38,8 @@ if (Test-Path $extractedSource) {
         Write-Host "Warning: Could not localize gamegen.js at $currentPath. Using identified path if possible." -ForegroundColor Yellow
     }
 
-    # Define files/folders to preserve (only config.json as requested)
-    $preserve = @("config.json")
+    # Define files/folders to preserve (only config.json and debug.txt as requested)
+    $preserve = @("config.json", "debug.txt")
     
     # Remove everything else in current path (except config.json)
     Write-Host "Clearing old files at $currentPath..." -ForegroundColor Gray

@@ -83,12 +83,24 @@ class Plugin:
 
     def _log_debug(self, message: str):
         try:
+            # We skip this only if explicitly False
+            if hasattr(self, "debug_logging") and self.debug_logging == False:
+                return
+                
             plugin_dir = self._get_plugin_dir()
             debug_path = os.path.join(plugin_dir, "debug.txt")
             import datetime
             ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(debug_path, "a", encoding="utf-8") as f:
                 f.write(f"[{ts}] {message}\n")
+        except:
+            pass
+    def _init_debug_log(self):
+        try:
+            plugin_dir = self._get_plugin_dir()
+            debug_path = os.path.join(plugin_dir, "debug.txt")
+            self._log_debug(f"DEBUG: Initializing. Plugin path: {plugin_dir}")
+            self._log_debug(f"DEBUG: Config path: {os.path.join(plugin_dir, 'config.json')}")
         except:
             pass
 
@@ -126,10 +138,13 @@ class Plugin:
         try:
             Millennium.ready()
             print(f"[GameGen] Plugin v{VERSION} initialized.")
+            self._init_debug_log()
             
             plugin_dir = self._get_plugin_dir()
             self.config_path = os.path.join(plugin_dir, "config.json")
             self.history_path = os.path.join(plugin_dir, "history.json")
+            
+            self._init_debug_log()
             
             # Apply any pending updates first
             msg = self._apply_pending_update()
@@ -139,16 +154,20 @@ class Plugin:
                 print(f"[GameGen] Update note: {msg}")
 
             if os.path.exists(self.config_path):
+                self._log_debug("DEBUG: Config found, loading...")
                 try:
                     with open(self.config_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        self.api_key = data.get("api_key", DEFAULT_API_KEY)
-                        self.auto_restart_steam = data.get("auto_restart_steam", False)
-                        self.beta_updates = data.get("beta_updates", False)
-                        self.debug_logging = data.get("debug_logging", True)
-                        self.notification_duration = data.get("notification_duration", 6)
+                        self.api_key = str(data.get("api_key", DEFAULT_API_KEY))
+                        self.auto_restart_steam = bool(data.get("auto_restart_steam", False))
+                        self.beta_updates = bool(data.get("beta_updates", False))
+                        self.debug_logging = bool(data.get("debug_logging", True))
+                        self.notification_duration = int(data.get("notification_duration", 6))
+                        self._log_debug("DEBUG: Config loaded successfully.")
                 except Exception as e:
                     self._log_debug(f"Error loading config: {e}")
+            else:
+                 self._log_debug(f"DEBUG: No config found at {self.config_path}")
             
             self._inject_webkit_files()
             
@@ -515,29 +534,48 @@ def set_api_key(key: str, contentScriptQuery: str = "") -> str:
 
 def update_settings(settings: Any = None, **kwargs) -> str:
     try:
-        data = {}
-        if isinstance(settings, dict):
-            data = settings
-        elif kwargs:
-            data = kwargs.get("settings", kwargs)
+        raw_data = settings if settings is not None else kwargs.get("settings", kwargs)
+        
+        # Determine the final dictionary to work with
+        if isinstance(raw_data, str) and raw_data:
+            try:
+                data = json.loads(raw_data)
+            except:
+                return json.dumps({"success": False, "error": "Invalid JSON format in settings"})
+        elif isinstance(raw_data, dict):
+            data = raw_data
+        else:
+            return json.dumps({"success": False, "error": f"Unexpected data type: {type(raw_data)}"})
             
-        if not data:
-             return json.dumps({"success": False, "error": "No settings data received"})
+        # If payload is wrapped in another 'settings' key
+        if isinstance(data, dict) and "settings" in data:
+            data = data["settings"]
+            
+        if not isinstance(data, dict):
+             return json.dumps({"success": False, "error": "Settings payload must be a dictionary"})
 
-        plugin.api_key = data.get("api_key", plugin.api_key)
-        plugin.auto_restart_steam = data.get("auto_restart_steam", plugin.auto_restart_steam)
-        plugin.beta_updates = data.get("beta_updates", plugin.beta_updates)
-        plugin.debug_logging = data.get("debug_logging", plugin.debug_logging)
+        # Apply settings with type safety
+        if "api_key" in data:
+            plugin.api_key = str(data["api_key"])
+        if "auto_restart_steam" in data:
+            plugin.auto_restart_steam = bool(data["auto_restart_steam"])
+        if "beta_updates" in data:
+            plugin.beta_updates = bool(data["beta_updates"])
+        if "debug_logging" in data:
+            plugin.debug_logging = bool(data["debug_logging"])
+        if "notification_duration" in data:
+            try:
+                val = int(data["notification_duration"])
+                if 0 < val < 3600:
+                    plugin.notification_duration = val
+            except:
+                pass
         
-        duration = data.get("notification_duration", plugin.notification_duration)
-        try:
-            plugin.notification_duration = int(duration)
-        except:
-            pass
-        
+        plugin._log_debug(f"DEBUG: Applied settings update. New key len: {len(plugin.api_key)}")
         save_config()
         return json.dumps({"success": True})
     except Exception as e:
+        plugin._log_debug(f"CRITICAL ERROR in update_settings: {e}")
         return json.dumps({"success": False, "error": str(e)})
 
 def get_settings(contentScriptQuery: str = "") -> str:
@@ -550,7 +588,14 @@ def get_settings(contentScriptQuery: str = "") -> str:
     })
 
 def save_config():
-    if plugin.config_path:
+    try:
+        if not plugin.config_path:
+            # Emergency path recovery
+            dir = plugin._get_plugin_dir()
+            plugin.config_path = os.path.join(dir, "config.json")
+            
+        plugin._log_debug(f"DEBUG: Saving config to {plugin.config_path}")
+        
         with open(plugin.config_path, "w", encoding="utf-8") as f:
             json.dump({
                 "api_key": plugin.api_key,
@@ -558,7 +603,10 @@ def save_config():
                 "beta_updates": plugin.beta_updates,
                 "debug_logging": plugin.debug_logging,
                 "notification_duration": plugin.notification_duration
-            }, f)
+            }, f, indent=4)
+    except Exception as e:
+        plugin._log_debug(f"FAILED TO SAVE CONFIG: {e}")
+        raise e
 
 import zipfile
 import io
