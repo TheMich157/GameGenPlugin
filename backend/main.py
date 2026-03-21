@@ -11,6 +11,7 @@ import zipfile
 import time
 import io
 from typing import Any, Dict, Optional, List
+import tempfile
 import Millennium # type: ignore
 
 try:
@@ -469,51 +470,80 @@ class Plugin:
             return False
 
     def _extract_zip_contents(self, zip_data: bytes, app_id_str: str, game_target_dir: str, steamapps_dir: str):
-        """ Robustly extract ACF, Manifest, and Lua files from ANY folder inside the ZIP """
-        self._log_debug(f"DEBUG: EXTENSIVE EXTRACTION STARTED for AppID {app_id_str}")
+        """ Extract ZIP to temp folder first, then precisely move metadata to Steam folders """
+        self._log_debug(f"DEBUG: STARTING STAGED EXTRACTION for AppID {app_id_str}")
         try:
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-                z.extractall(game_target_dir)
-                names = z.namelist()
-                self._log_debug(f"DEBUG: Total files in ZIP: {len(names)}. Full list: {names}")
-
+            with tempfile.TemporaryDirectory() as temp_dir:
+                zip_path = os.path.join(temp_dir, "content.zip")
+                with open(zip_path, "wb") as f:
+                    f.write(zip_data)
+                
+                extract_root = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_root, exist_ok=True)
+                
+                with zipfile.ZipFile(zip_path, 'r') as z:
+                    z.extractall(extract_root)
+                
                 steam_path = self._find_steam_path()
                 depotcache_dir = os.path.join(steam_path, "depotcache")
                 stplugin_dir = os.path.join(steam_path, "config", "stplug-in")
                 os.makedirs(depotcache_dir, exist_ok=True)
                 os.makedirs(stplugin_dir, exist_ok=True)
-                self._log_debug(f"DEBUG: Paths - depotcache: {depotcache_dir}, stplug-in: {stplugin_dir}")
+                
+                # Walk the extracted content
+                for root, dirs, files in os.walk(extract_root):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, extract_root)
+                        
+                        # Strip common GitHub root if exists
+                        if '/' in rel_path or '\\' in rel_path:
+                            parts = rel_path.replace('\\', '/').split('/')
+                            # If first part looks like a repo root (e.g. game-main), we might want to skip it?
+                            # But here we want the files wherever they are.
+                        
+                        pure_name = file.lower()
+                        
+                        # 1. ACF -> steamapps
+                        if pure_name.endswith(".acf") and (pure_name.startswith("appmanifest_") or app_id_str in pure_name):
+                            dest = os.path.join(steamapps_dir, file)
+                            shutil.copy2(file_path, dest)
+                            self._log_debug(f"DEBUG: Moved ACF to {dest}")
+                        
+                        # 2. Manifest -> depotcache
+                        elif pure_name.endswith(".manifest"):
+                            dest = os.path.join(depotcache_dir, file)
+                            shutil.copy2(file_path, dest)
+                            self._log_debug(f"DEBUG: Moved Manifest to {dest}")
+                            
+                        # 3. Lua -> config/st-plugin
+                        elif pure_name.endswith(".lua"):
+                            # Logic to match correct lua script
+                            is_match = (app_id_str in pure_name) or (len(files) == 1) or ("script" in pure_name)
+                            if is_match:
+                                # We rename it to {app_id}.lua for consistency in st-plugin
+                                dest = os.path.join(stplugin_dir, f"{app_id_str}.lua")
+                                shutil.copy2(file_path, dest)
+                                self._log_debug(f"DEBUG: Moved LUA to {dest}")
+                        
+                        # 4. Everything else -> game content dir
+                        else:
+                            parts = rel_path.replace('\\', '/').split('/')
+                            if len(parts) > 1:
+                                # Remove the root folder name
+                                parts.pop(0)
+                                target_rel = "/".join(parts)
+                            else:
+                                target_rel = rel_path
+                                
+                            dest = os.path.join(game_target_dir, target_rel)
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            if not os.path.isdir(file_path):
+                                shutil.copy2(file_path, dest)
 
-                for name in names:
-                    pure_name = os.path.basename(name)
-                    
-                    # A. Extract ACF files to steamapps (Primary discovery)
-                    is_acf = pure_name.endswith(".acf") and (pure_name.startswith("appmanifest_") or app_id_str in pure_name)
-                    if is_acf:
-                        self._log_debug(f"DEBUG: IDENTIFIED ACF inside Zip: {name}")
-                        if self._write_acf(z, name, pure_name, steamapps_dir):
-                            self._log_debug(f"DEBUG: Saved ACF to {steamapps_dir}")
-
-                    # B. Extract Manifest files to depotcache
-                    is_manifest = pure_name.endswith(".manifest")
-                    if is_manifest:
-                        self._log_debug(f"DEBUG: IDENTIFIED MANIFEST inside Zip: {name}")
-                        if self._write_manifest(z, name, pure_name, depotcache_dir):
-                            self._log_debug(f"DEBUG: Saved Manifest to {depotcache_dir}")
-
-                    # C. Extract LUA scripts to stplug-in
-                    is_lua = pure_name.endswith(".lua")
-                    if is_lua:
-                        self._log_debug(f"DEBUG: IDENTIFIED LUA inside Zip: {name}")
-                        # If it matches appid or is the only one, or contains "script"
-                        is_match = (app_id_str in pure_name) or (len([n for n in names if n.lower().endswith(".lua")]) == 1) or ("script" in pure_name.lower())
-                        if is_match:
-                            if self._write_lua(z, name, pure_name, app_id_str, stplugin_dir):
-                                self._log_debug(f"DEBUG: Saved LUA to {stplugin_dir}")
-
-                self._log_debug("DEBUG: Extraction process finished.")
+                self._log_debug(f"DEBUG: Staged extraction completed for {app_id_str}")
         except Exception as e:
-            self._log_debug(f"🛑 ZIP EXTRACTION GLOBAL INTERRUPT: {e}")
+            self._log_debug(f"DEBUG: 🛑 STAGED EXTRACTION FAILED: {e}")
 
 plugin = Plugin()
 
