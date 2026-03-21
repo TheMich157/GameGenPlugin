@@ -186,20 +186,28 @@ class Plugin:
         """Find where an app is installed among all libraries."""
         app_id_str = str(app_id).strip()
         libraries = self._get_library_folders()
+        steam_path = Millennium.steam_path()
+        
+        # User specified system-wide paths
+        depotcache_dir = os.path.join(steam_path, "depotcache")
+        stplugin_config_dir = os.path.join(steam_path, "config", "stplug-in")
+        
+        # Priority system-wide files
+        sys_manifest = os.path.join(depotcache_dir, f"{app_id_str}.manifest")
+        sys_lua = os.path.join(stplugin_config_dir, f"{app_id_str}.lua")
         
         for lib in libraries:
             steamapps = os.path.join(lib, "steamapps")
-            manifest = os.path.join(steamapps, f"{app_id_str}.manifest")
-            lua = os.path.join(steamapps, f"{app_id_str}.lua")
             acf = os.path.join(steamapps, f"appmanifest_{app_id_str}.acf")
             
-            if os.path.exists(manifest) or os.path.exists(lua) or os.path.exists(acf):
+            # If any of these exist, the app is "installed" via GameGen
+            if os.path.exists(sys_manifest) or os.path.exists(sys_lua) or os.path.exists(acf):
                 return {
                     "library_path": lib,
                     "steamapps_path": steamapps,
-                    "manifest_path": manifest,
-                    "lua_path": lua,
                     "acf_path": acf,
+                    "manifest_path": sys_manifest, # Path in depotcache
+                    "lua_path": sys_lua,           # Path in config/stplug-in
                     "exists": True
                 }
                 
@@ -209,9 +217,9 @@ class Plugin:
         return {
             "library_path": main_lib,
             "steamapps_path": main_steamapps,
-            "manifest_path": os.path.join(main_steamapps, f"{app_id_str}.manifest"),
-            "lua_path": os.path.join(main_steamapps, f"{app_id_str}.lua"),
             "acf_path": os.path.join(main_steamapps, f"appmanifest_{app_id_str}.acf"),
+            "manifest_path": sys_manifest,
+            "lua_path": sys_lua,
             "exists": False
         }
 
@@ -271,45 +279,56 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
         # Use new library detection logic
         paths = plugin._find_app_paths(app_id_str)
         steamapps_dir = paths["steamapps_path"]
-        dest_path = paths["acf_path"]
+        acf_path = paths["acf_path"]
         already_existed = paths["exists"]
 
         url = f"{GAMEGEN_BASE_URL}/{plugin.api_key}/generate/{app_id_str}"
+        plugin._log_debug(f"Requesting generation for {app_id_str} from {url}")
         result = _make_request(url, method="GET")
         
         if not result.get("success"):
+            plugin._log_debug(f"API Error for {app_id_str}: {result}")
             return json.dumps(result)
             
         m = result.get("manifest", {})
-        game_name = m.get("name", f"App {app_id_str}")
+        game_name = m.get("name") or result.get("name") or f"App {app_id_str}"
         download_url = m.get("downloadUrl") or m.get("download_url") or m.get("url") or m.get("fileUrl")
         
         # New ZIP logic
-        zip_url = result.get("zipUrl") or result.get("zip_url") or m.get("zipUrl") or m.get("zip_url") or result.get("contentUrl")
+        zip_url = result.get("zipUrl") or result.get("zip_url") or m.get("zipUrl") or m.get("zip_url") or result.get("content_url")
         installdir = m.get("installdir") or m.get("install_dir") or game_name
         
+        manifest_installed = False
+        zip_installed = False
+
         # 1. Manifest / Script Downloads
         if download_url:
             try:
+                # Ensure directories exist
                 os.makedirs(steamapps_dir, exist_ok=True)
+                os.makedirs(os.path.dirname(paths["manifest_path"]), exist_ok=True)
+                os.makedirs(os.path.dirname(paths["lua_path"]), exist_ok=True)
+                
                 dl_req = urllib.request.Request(download_url)
                 dl_req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                 with urllib.request.urlopen(dl_req, timeout=30) as resp:
                     data = resp.read()
                     
-                    # Save all required formats as the user indicated .lua and .manifest are main
-                    with open(dest_path, 'wb') as f: # .acf
+                    # Store main .acf for Steam discovery
+                    with open(acf_path, 'wb') as f:
                         f.write(data)
-                    with open(os.path.join(steamapps_dir, f"{app_id_str}.manifest"), 'wb') as f:
+                    
+                    # Store priority files in user-specified paths
+                    with open(paths["manifest_path"], 'wb') as f:
                         f.write(data)
-                    with open(os.path.join(steamapps_dir, f"{app_id_str}.lua"), 'wb') as f:
+                    with open(paths["lua_path"], 'wb') as f:
                         f.write(data)
                 
-                result["_auto_installed"] = True
-                result["_already_existed"] = already_existed
-                plugin._add_to_history(app_id_str, game_name)
+                manifest_installed = True
+                plugin._log_debug(f"Successfully saved manifest files for {app_id_str}")
             except Exception as e:
-                result["_manifest_error"] = f"Manifest download failed: {str(e)}"
+                plugin._log_debug(f"Manifest download failed for {app_id_str}: {e}")
+                result["_manifest_error"] = str(e)
         
         # 2. ZIP Processing / Game Content
         if zip_url:
@@ -318,7 +337,7 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                 game_target_dir = os.path.join(common_dir, installdir)
                 os.makedirs(game_target_dir, exist_ok=True)
                 
-                print(f"[GameGen] Downloading content from {zip_url} to {game_target_dir}")
+                plugin._log_debug(f"Downloading ZIP: {zip_url}")
                 
                 zip_req = urllib.request.Request(zip_url)
                 zip_req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
@@ -328,13 +347,34 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                     with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
                         z.extractall(game_target_dir)
                 
-                result["_zip_installed"] = True
-                print(f"[GameGen] Successfully extracted ZIP for {game_name}")
+                zip_installed = True
+                plugin._log_debug(f"Successfully extracted ZIP for {app_id_str} to {game_target_dir}")
             except Exception as e:
-                result["_zip_error"] = f"ZIP extraction failed: {str(e)}"
-                print(f"[GameGen] ZIP ERROR: {e}")
+                plugin._log_debug(f"ZIP extraction failed for {app_id_str}: {e}")
+                result["_zip_error"] = str(e)
+                
+        # Update result and history if something was successful
+        if manifest_installed or zip_installed:
+            result["success"] = True # Force success if at least one part worked
+            result["_auto_installed"] = manifest_installed
+            result["_zip_installed"] = zip_installed
+            result["_already_existed"] = already_existed
+            plugin._add_to_history(app_id_str, game_name)
+            plugin._log_debug(f"Generation workflow completed for {app_id_str}")
                 
         return json.dumps(result)
+    except Exception as e:
+        plugin._log_debug(f"generate_manifest global error: {e}")
+        return json.dumps({"success": False, "error": str(e)})
+
+def get_newly_added(contentScriptQuery: str = "") -> str:
+    try:
+        import time
+        now = int(time.time())
+        history = plugin._get_history()
+        # Find games added in the last 15 minutes (900 seconds)
+        new_games = [item for item in history if now - item.get("timestamp", 0) < 900]
+        return json.dumps({"success": True, "games": new_games})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 

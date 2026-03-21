@@ -257,6 +257,16 @@
 
     // -- UI Injection --
 
+
+    async function checkPostRestart() {
+        const res = await safeCall('get_newly_added');
+        if (res && res.success && res.games && res.games.length > 0) {
+            const count = res.games.length;
+            const names = res.games.map(g => g.name || `App ${g.app_id}`).join(', ');
+            createToast(`✨ ${count} New Game${count > 1 ? 's' : ''} Added: ${names}`, 'success');
+        }
+    }
+
     function initUI() {
         if (document.getElementById('gamegen-plugin-container')) return;
 
@@ -334,7 +344,7 @@
                     
                     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05);">
                         <span class="section-label">Maintenance</span>
-                        <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version {VERSION} · Pull latest changes from GitHub.</p>
+                        <p style="font-size: 11px; color: var(--gg-text-dim); margin-bottom: 15px;">Version v3.3.0 · Pull latest changes from GitHub.</p>
                         <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin">Check for Updates</button>
                     </div>
 
@@ -392,6 +402,9 @@
             apiKeySet = true;
             document.getElementById('gg-key-input').value = savedKey;
             safeCall('set_api_key', { key: savedKey });
+            
+            // Check for new games after login/init
+            setTimeout(() => checkPostRestart(), 3000);
         } else {
             App.switchTab('settings');
             App.toggleUI(true);
@@ -401,7 +414,6 @@
     }
 
     // -- Store Page Integration --
-
     function getStoreAppId() {
         const match = window.location.href.match(/https:\/\/store\.steampowered\.com\/app\/(\d+)/);
         return match ? match[1] : null;
@@ -442,33 +454,35 @@
 
             if (!target) return;
 
-            // Check if already injected
-            if (target.querySelector('#gg-store-inject')) return;
-            
-            // Clean any orphaned instances
+            // Ensure no duplicates
             document.querySelectorAll('#gg-store-inject').forEach(el => el.remove());
 
             const status = await safeCall('check_manifest_exists', { app_id: appId });
             const isInstalled = status?.exists;
 
+            // Double check after async call
+            if (document.getElementById('gg-store-inject')) return;
+
             const div = document.createElement('div');
             div.id = 'gg-store-inject';
-            div.style.margin = '10px 0';
-            div.style.width = '100%';
-            div.style.display = 'block';
+            div.style.display = 'inline-block';
+            div.style.verticalAlign = 'top';
+            
+            // If we're in the OtherSiteInfo area, we want to match the width/style of those buttons
+            const isInOtherSiteInfo = target.classList.contains('apphub_OtherSiteInfo');
             
             if (isInstalled) {
                 div.innerHTML = `
-                    <a class="gg-store-btn remove btnv6_red_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box; display: flex; align-items: center; gap: 8px;">
+                    <a class="btnv6_red_hoverfade btn_medium" href="#" style="padding: 0 15px; height: 30px; line-height: 30px; display: inline-flex; align-items: center; gap: 6px; margin-right: 2px;">
                         <span>🗑️</span>
-                        <span style="color: white; font-weight: 700;">Remove Game</span>
+                        <span style="color: white; font-weight: 500; font-size: 12px;">Remove Game</span>
                     </a>
                 `;
             } else {
                 div.innerHTML = `
-                    <a class="gg-store-btn btnv6_blue_hoverfade" href="#" style="width: 100%; justify-content: center; box-sizing: border-box; display: flex; align-items: center; gap: 8px;">
+                    <a class="btnv6_blue_hoverfade btn_medium" href="#" style="padding: 0 15px; height: 30px; line-height: 30px; display: inline-flex; align-items: center; gap: 6px; margin-right: 2px;">
                         <span>✨</span>
-                        <span style="color: white; font-weight: 700;">Add to GameGen</span>
+                        <span style="color: white; font-weight: 500; font-size: 12px;">Add to GameGen</span>
                     </a>
                 `;
             }
@@ -488,8 +502,9 @@
                     App.generate(appId, btn);
                 }
             };
-
-            if (target.id === 'game_area_purchase' || target.classList.contains('add_to_wishlist_area')) {
+            
+            // Smart Insertion: Prepend to Community Hub area or purchase box for visibility
+            if (isInOtherSiteInfo || target.id === 'game_area_purchase' || target.classList.contains('add_to_wishlist_area')) {
                 target.prepend(div);
             } else {
                 target.appendChild(div);
@@ -500,7 +515,6 @@
     }
 
     // -- Lifecycle --
-
     const observer = new MutationObserver(() => injectStoreUI());
 
     const initInterval = setInterval(() => {
