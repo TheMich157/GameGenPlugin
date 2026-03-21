@@ -265,17 +265,52 @@
             const names = res.games.map(g => g.name || `App ${g.app_id}`).join(', ');
             createToast(`✨ ${count} New Game${count > 1 ? 's' : ''} Added: ${names}`, 'success');
         }
+        
+        // Also check for background update notifications
+        const upd = await safeCall('get_update_notification');
+        if (upd && upd.message) {
+            createToast(upd.message, 'info', 'Restart Now', () => safeCall('restart_steam'));
+        }
     }
 
     function initUI() {
         if (document.getElementById('gamegen-plugin-container')) return;
 
-        // 1. Launcher button
-        const launcherBtn = document.createElement('button');
-        launcherBtn.id = 'gamegen-launcher-btn';
-        launcherBtn.innerHTML = '✨';
-        launcherBtn.onclick = () => App.toggleUI();
-        document.body.appendChild(launcherBtn);
+        // 1. Launcher and its menu
+        const launcherCtn = document.createElement('div');
+        launcherCtn.id = 'gg-launcher-ctn';
+        launcherCtn.innerHTML = `
+            <div id="gg-launcher-menu">
+                <button class="gg-menu-item" id="gg-menu-settings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>Settings</span>
+                </button>
+                <button class="gg-menu-item" id="gg-menu-update">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                    <span>Update Search</span>
+                </button>
+            </div>
+            <button id="gamegen-launcher-btn">✨</button>
+        `;
+        document.body.appendChild(launcherCtn);
+
+        const launcherBtn = document.getElementById('gamegen-launcher-btn');
+        launcherBtn.onclick = () => launcherCtn.classList.toggle('open');
+        
+        document.getElementById('gg-menu-settings').onclick = () => {
+            App.switchTab('settings');
+            App.toggleUI(true);
+            launcherCtn.classList.remove('open');
+        };
+        
+        document.getElementById('gg-menu-update').onclick = async () => {
+            launcherCtn.classList.remove('open');
+            createToast("Checking for updates...", "info");
+            const res = await safeCall('update_plugin');
+            if (res && res.success) {
+                createToast(res.message || "Update process started.", "info");
+            }
+        };
 
         // 2. Overlay
         const overlay = document.createElement('div');
@@ -314,14 +349,13 @@
                         </div>
                     </div>
 
-                    <span class="section-label">Manual Generator</span>
+                    <span class="section-label">Generator</span>
                     <div class="gamegen-input-wrapper">
                         <input type="text" id="gg-app-id-input" class="gamegen-input" placeholder="Steam App ID (e.g. 730)">
                     </div>
-                    <div style="display: flex; gap: 12px;">
-                        <button class="gamegen-btn gamegen-btn-primary" id="gg-gen-btn">Generate</button>
-                        <button class="gamegen-btn gamegen-btn-secondary" id="gg-req-btn">Request</button>
-                    </div>
+                    <button class="gamegen-btn gamegen-btn-primary" id="gg-gen-btn">Install to Library</button>
+                    
+                    <p style="font-size: 11px; color: var(--gg-text-dim); margin-top: 20px; text-align: center;">Visit the Steam Store to add games directly.</p>
                 </div>
 
                 <!-- Library -->
@@ -402,13 +436,14 @@
             apiKeySet = true;
             document.getElementById('gg-key-input').value = savedKey;
             safeCall('set_api_key', { key: savedKey });
-            
-            // Check for new games after login/init
-            setTimeout(() => checkPostRestart(), 3000);
         } else {
             App.switchTab('settings');
             App.toggleUI(true);
         }
+        
+        // Initial check and periodic poll for background updates
+        setTimeout(() => checkPostRestart(), 3000);
+        setInterval(() => checkPostRestart(), 300000); // Poll every 5 mins
 
         uiInjected = true;
     }

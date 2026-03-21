@@ -3,12 +3,30 @@ import os
 import shutil
 import urllib.request
 import urllib.error
-from typing import Any
+import re
+import sys
+import threading
+import datetime
+import zipfile
+import time
+from typing import Any, Dict, Optional
 import Millennium # type: ignore
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+_STEAM_INSTALL_PATH = None
+_UPDATE_THREAD = None
+_LAST_UPDATE_MESSAGE = ""
 
 GAMEGEN_BASE_URL = "https://gamegen.lol/api"
 DEFAULT_API_KEY = ""
-VERSION = "3.3.0"
+VERSION = "3.4.0"
+REPO_OWNER = "TheMich157"
+REPO_NAME = "GameGenPlugin"
+UPDATE_CHECK_INTERVAL = 3600 * 2 # 2 hours
 
 class Plugin:
     def __init__(self):
@@ -16,6 +34,29 @@ class Plugin:
         self.config_path = ""
         self.history_path = ""
         
+    def _find_steam_path(self) -> str:
+       
+        global _STEAM_INSTALL_PATH
+        if _STEAM_INSTALL_PATH:
+            return _STEAM_INSTALL_PATH
+
+        path = None
+        if sys.platform.startswith("win") and winreg is not None:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+                    path, _ = winreg.QueryValueEx(key, "SteamPath")
+            except Exception:
+                pass
+
+        if not path:
+            try:
+                path = Millennium.steam_path()
+            except Exception:
+                pass
+
+        _STEAM_INSTALL_PATH = path
+        return _STEAM_INSTALL_PATH or ""
+
     def _get_plugin_dir(self) -> str:
         # 1. Try current file context
         current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +65,8 @@ class Plugin:
             
         # 2. Try absolute path from Millennium if available
         try:
-            mill_dir = os.path.join(Millennium.steam_path(), "plugins", "GameGenPlugin")
+            steam_path = self._find_steam_path()
+            mill_dir = os.path.join(steam_path, "plugins", "GameGenPlugin")
             if os.path.exists(mill_dir):
                 return mill_dir
         except:
@@ -55,7 +97,8 @@ class Plugin:
                 self._log_debug(f"CRITICAL: Failed to locate public/gamegen.js inside {plugin_dir}")
                 return
 
-            steam_ui_dir = os.path.join(Millennium.steam_path(), "steamui", "gamegen_ui")
+            steam_path = self._find_steam_path()
+            steam_ui_dir = os.path.join(steam_path, "steamui", "gamegen_ui")
             os.makedirs(steam_ui_dir, exist_ok=True)
             
             js_dst = os.path.join(steam_ui_dir, "gamegen.js")
@@ -76,12 +119,19 @@ class Plugin:
     def _load(self):
         try:
             Millennium.ready()
-            print("[GameGen] Python plugin initialized.")
+            print(f"[GameGen] Plugin v{VERSION} initialized.")
             
             plugin_dir = self._get_plugin_dir()
             self.config_path = os.path.join(plugin_dir, "config.json")
             self.history_path = os.path.join(plugin_dir, "history.json")
             
+            # Apply any pending updates first
+            msg = self._apply_pending_update()
+            if msg:
+                global _LAST_UPDATE_MESSAGE
+                _LAST_UPDATE_MESSAGE = msg
+                print(f"[GameGen] Update note: {msg}")
+
             if os.path.exists(self.config_path):
                 try:
                     with open(self.config_path, "r", encoding="utf-8") as f:
@@ -91,10 +141,95 @@ class Plugin:
                     self._log_debug(f"Error loading config: {e}")
             
             self._inject_webkit_files()
+            
+            # Start background update checks
+            self._start_update_thread()
                     
         except Exception as e:
             self._log_debug(f"init exception: {e}")
             print(f"[GameGen] init exception: {e}")
+
+    def _apply_pending_update(self) -> str:
+        """ Extract pending update if it exists """
+        plugin_dir = self._get_plugin_dir()
+        pending_zip = os.path.join(plugin_dir, "update_pending.zip")
+        if os.path.exists(pending_zip):
+            try:
+                with zipfile.ZipFile(pending_zip, 'r') as z:
+                    z.extractall(plugin_dir)
+                os.remove(pending_zip)
+                return "Latest update applied. Restart Steam to finish."
+            except Exception as e:
+                self._log_debug(f"Apply update failed: {e}")
+        return ""
+
+    def _start_update_thread(self):
+        global _UPDATE_THREAD
+        if _UPDATE_THREAD is None or not _UPDATE_THREAD.is_alive():
+            _UPDATE_THREAD = threading.Thread(target=self._update_worker, daemon=True)
+            _UPDATE_THREAD.start()
+
+    def _update_worker(self):
+        while True:
+            try:
+                time.sleep(60) # Fast check first time, then interval
+                self._check_for_updates()
+                time.sleep(UPDATE_CHECK_INTERVAL)
+            except Exception as e:
+                self._log_debug(f"Update worker error: {e}")
+                time.sleep(300)
+
+    def _check_for_updates(self, manual=False) -> str:
+        try:
+            url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+            headers = {"User-Agent": "GameGen-Plugin-Updater"}
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                remote_ver = data.get("tag_name", "").strip("v")
+                
+                if self._is_newer(remote_ver, VERSION):
+                    self._log_debug(f"New version found: {remote_ver}")
+                    assets = data.get("assets", [])
+                    download_url = ""
+                    for asset in assets:
+                        if asset.get("name", "").endswith(".zip"):
+                            download_url = asset.get("browser_download_url")
+                            break
+                    
+                    if not download_url: # Fallback to source zip
+                        download_url = data.get("zipball_url")
+                    
+                    if download_url:
+                        self._download_update(download_url)
+                        msg = f"Update v{remote_ver} downloaded. Restart Steam to apply."
+                        if not manual:
+                            global _LAST_UPDATE_MESSAGE
+                            _LAST_UPDATE_MESSAGE = msg
+                        return msg
+                elif manual:
+                    return "Plugin is up to date."
+        except Exception as e:
+            self._log_debug(f"Check update failed: {e}")
+            if manual: return f"Check failed: {e}"
+        return ""
+
+    def _is_newer(self, remote, local) -> bool:
+        try:
+            r_parts = [int(p) for p in remote.split(".")]
+            l_parts = [int(p) for p in local.split(".")]
+            return r_parts > l_parts
+        except:
+            return remote > local
+
+    def _download_update(self, url: str):
+        plugin_dir = self._get_plugin_dir()
+        target = os.path.join(plugin_dir, "update_pending.zip")
+        headers = {"User-Agent": "GameGen-Plugin-Updater"}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            with open(target, 'wb') as f:
+                f.write(resp.read())
 
     def _get_history(self) -> list[dict[str, Any]]:
         if not self.history_path or not os.path.exists(self.history_path):
@@ -161,7 +296,7 @@ class Plugin:
         """Get all Steam library folders by parsing libraryfolders.vdf."""
         libraries = []
         try:
-            steam_path = Millennium.steam_path()
+            steam_path = self._find_steam_path()
             libraries.append(steam_path) # Main library
             
             vdf_path = os.path.join(steam_path, "config", "libraryfolders.vdf")
@@ -186,7 +321,7 @@ class Plugin:
         """Find where an app is installed among all libraries."""
         app_id_str = str(app_id).strip()
         libraries = self._get_library_folders()
-        steam_path = Millennium.steam_path()
+        steam_path = self._find_steam_path()
         
         # User specified system-wide paths
         depotcache_dir = os.path.join(steam_path, "depotcache")
@@ -318,11 +453,8 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                     with open(acf_path, 'wb') as f:
                         f.write(data)
                     
-                    # Store priority files in user-specified paths
-                    with open(paths["manifest_path"], 'wb') as f:
-                        f.write(data)
-                    with open(paths["lua_path"], 'wb') as f:
-                        f.write(data)
+                    # We no longer redundantly write .acf data to .manifest or .lua paths,
+                    # as we now extract those from the ZIP if available (matching ltsteamplugin).
                 
                 manifest_installed = True
                 plugin._log_debug(f"Successfully saved manifest files for {app_id_str}")
@@ -346,6 +478,62 @@ def generate_manifest(app_id: str, contentScriptQuery: str = "") -> str:
                     zip_data = resp.read()
                     with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
                         z.extractall(game_target_dir)
+                        
+                        # Store .lua and .manifest from zip (matching ltsteamplugin behavior)
+                        names = z.namelist()
+                        
+                        # 1. Extract .manifest files to depotcache
+                        try:
+                            depotcache_dir = os.path.join(plugin._find_steam_path(), "depotcache")
+                            os.makedirs(depotcache_dir, exist_ok=True)
+                            for name in names:
+                                if name.lower().endswith(".manifest"):
+                                    pure = os.path.basename(name)
+                                    data = z.read(name)
+                                    out_path = os.path.join(depotcache_dir, pure)
+                                    with open(out_path, "wb") as mf:
+                                        mf.write(data)
+                                    plugin._log_debug(f"Extracted manifest from zip: {pure}")
+                        except Exception as e:
+                            plugin._log_debug(f"Failed to extract manifests from zip: {e}")
+
+                        # 2. Extract and process .lua scripts to config/stplug-in
+                        try:
+                            stplugin_dir = os.path.join(plugin._find_steam_path(), "config", "stplug-in")
+                            os.makedirs(stplugin_dir, exist_ok=True)
+                            
+                            lua_candidates = [n for n in names if re.fullmatch(r"\d+\.lua", os.path.basename(n))]
+                            chosen_lua = None
+                            preferred = f"{app_id_str}.lua"
+                            
+                            for n in lua_candidates:
+                                if os.path.basename(n) == preferred:
+                                    chosen_lua = n
+                                    break
+                            if not chosen_lua and lua_candidates:
+                                chosen_lua = lua_candidates[0]
+                                
+                            if chosen_lua:
+                                lua_data = z.read(chosen_lua)
+                                try:
+                                    text = lua_data.decode("utf-8")
+                                except:
+                                    text = lua_data.decode("utf-8", errors="replace")
+                                    
+                                # Comment out setManifestid calls (ltsteamplugin behavior)
+                                processed_lines = []
+                                for line in text.splitlines(True):
+                                    if re.match(r"^\s*setManifestid\(", line) and not re.match(r"^\s*--", line):
+                                        line = re.sub(r"^(\s*)", r"\1--", line)
+                                    processed_lines.append(line)
+                                
+                                processed_text = "".join(processed_lines)
+                                dest_lua = os.path.join(stplugin_dir, f"{app_id_str}.lua")
+                                with open(dest_lua, "w", encoding="utf-8") as lf:
+                                    lf.write(processed_text)
+                                plugin._log_debug(f"Installed and processed lua script: {dest_lua}")
+                        except Exception as e:
+                            plugin._log_debug(f"Failed to extract/process lua from zip: {e}")
                 
                 zip_installed = True
                 plugin._log_debug(f"Successfully extracted ZIP for {app_id_str} to {game_target_dir}")
@@ -436,20 +624,16 @@ def uninstall_manifest(app_id: str, contentScriptQuery: str = "") -> str:
 
 def update_plugin(contentScriptQuery: str = "") -> str:
     try:
-        import subprocess
-        plugin_dir = plugin._get_plugin_dir()
-        script_path = os.path.join(plugin_dir, "update_plugin.ps1")
-        
-        if os.path.exists(script_path):
-            print(f"[GameGen] Updating plugin via custom script: {script_path}")
-            # Run PowerShell script without waiting (using 0x08000000 which is CREATE_NO_WINDOW on Windows)
-            subprocess.Popen(["powershell.exe", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", script_path], 
-                             creationflags=0x08000000)
-            return json.dumps({"success": True, "method": "powershell"})
-        else:
-            return json.dumps({"success": False, "error": "Update script not found."})
+        msg = plugin._check_for_updates(manual=True)
+        return json.dumps({"success": True, "message": msg or "Checking for updates..."})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
+
+def get_update_notification(contentScriptQuery: str = "") -> str:
+    global _LAST_UPDATE_MESSAGE
+    msg = _LAST_UPDATE_MESSAGE
+    _LAST_UPDATE_MESSAGE = ""
+    return json.dumps({"message": msg})
 
 def restart_steam(contentScriptQuery: str = "") -> str:
     try:
