@@ -190,7 +190,10 @@
             return null;
         }
         try {
+            console.log(`[GameGen] Calling ${method} with:`, args);
+            // We pass args directly, but our backend is now robust to strings as well if Millennium stringifies under the hood
             const res = await Millennium.callServerMethod('gamegen', method, args);
+            
             // Some versions return raw string, some return object
             const parsed = typeof res === 'string' ? JSON.parse(res) : res;
             console.log(`[GameGen] Call ${method} result:`, parsed);
@@ -226,6 +229,10 @@
             let errors = [];
 
             for (const appId of appIds) {
+                if (appIds.length > 1) {
+                    sourceBtn.innerHTML = `<div class="gg-spinner"></div> Processing ${successCount + errors.length + 1}/${appIds.length}`;
+                }
+                
                 const res = await safeCall('generate_manifest', { app_id: appId });
                 if (res && res.success) {
                     successCount++;
@@ -253,6 +260,7 @@
                 createToast(msg, 'success', t('restart_now'), () => safeCall('restart_steam'));
                 this.refreshHistory();
                 this.refreshStats();
+                this.refreshLogs(); // Update logs after deployment
             }
 
             if (errors.length > 0) {
@@ -352,6 +360,19 @@
             } else if (health) {
                 health.innerText = "System Link: Disconnected";
                 health.style.color = "#f87171";
+                // If it fails, also try to refresh logs to show why
+                this.refreshLogs();
+            }
+        },
+
+        async refreshLogs() {
+            const consoleEl = document.getElementById('gg-log-console');
+            if (!consoleEl) return;
+            
+            const res = await safeCall('get_logs');
+            if (res && res.success) {
+                consoleEl.innerText = res.logs || 'Waiting for system entries...';
+                consoleEl.scrollTop = consoleEl.scrollHeight;
             }
         },
 
@@ -431,6 +452,7 @@
                 container.classList.add('active');
                 overlay.classList.add('active');
                 this.refreshStats();
+                this.refreshLogs();
                 if (currentTab === 'library') this.refreshHistory();
             } else {
                 container.classList.remove('active');
@@ -687,7 +709,10 @@
                         <input type="password" id="gg-key-input" class="gamegen-input" placeholder="${t('api_key_placeholder')}">
                         <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
                              <span style="font-size: 11px; color: var(--gg-text-muted);">Encrypted & secure storage</span>
-                             <a href="https://gamegen.lol" target="_blank" style="color: var(--gg-primary); font-size: 12px; font-weight: 700; text-decoration: none;">Get key @ gamegen.lol</a>
+                             <div style="display: flex; gap: 10px; align-items: center;">
+                                <a href="https://gamegen.lol" target="_blank" style="color: var(--gg-primary); font-size: 12px; font-weight: 700; text-decoration: none;">Get key</a>
+                                <div id="gg-test-link" class="gg-badge" style="cursor:pointer; background: rgba(var(--gg-primary-rgb), 0.15); color: var(--gg-primary);">Test Link</div>
+                             </div>
                         </div>
                     </div>
                     
@@ -698,10 +723,18 @@
                         <p style="font-size: 12px; color: var(--gg-text-muted); margin-bottom: 20px; font-weight: 500;">
                             Native Version 6.0 · Synchronized with gamegen.cloud
                         </p>
-                        <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin">
-                            <span>⚡</span>
-                            <span>${t('check_updates')}</span>
-                        </button>
+                        
+                        <div class="gg-log-console" id="gg-log-console">Initializing system diagnostics...</div>
+                        
+                        <div style="margin-top: 20px; display: flex; gap: 10px;">
+                            <button class="gamegen-btn gamegen-btn-secondary" id="gg-update-plugin" style="flex: 1;">
+                                <span>⚡</span>
+                                <span>${t('check_updates')}</span>
+                            </button>
+                            <button class="gamegen-btn gamegen-btn-secondary" id="gg-refresh-diag" style="flex: 0 0 50px;">
+                                <span>🔄</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -784,6 +817,42 @@
         document.getElementById('gg-update-plugin').onclick = () => {
             createToast("Updating from GitHub... Steam will restart.", "info");
             safeCall('update_plugin');
+        };
+
+        document.getElementById('gg-refresh-diag').onclick = () => {
+            const btn = document.getElementById('gg-refresh-diag');
+            btn.classList.add('spinning');
+            App.refreshLogs();
+            App.refreshStats();
+            setTimeout(() => btn.classList.remove('spinning'), 800);
+        };
+
+        document.getElementById('gg-test-link').onclick = async () => {
+            const btn = document.getElementById('gg-test-link');
+            const key = document.getElementById('gg-key-input').value.trim();
+            if (!key) return createToast("Enter a key first", "warning");
+            
+            btn.innerText = "TESTING...";
+            btn.className = "gg-badge";
+            
+            // Temporary sync to test
+            await safeCall('update_settings', { settings: { api_key: key } });
+            const res = await safeCall('get_stats');
+            
+            if (res && res.success) {
+                btn.innerText = "LINK ACTIVE";
+                btn.className = "gg-badge gg-badge-success";
+                apiKeySet = true;
+                settings.api_key = key;
+                localStorage.setItem('gamegen_api_key', key);
+                createToast("System Link Established!", "success");
+            } else {
+                btn.innerText = "LINK FAILED";
+                btn.className = "gg-badge gg-badge-error";
+                createToast("Could not establish link: " + (res?.error || "Invalid Key"), "error");
+            }
+            App.refreshStats();
+            App.refreshLogs();
         };
 
         // Load Initial State
