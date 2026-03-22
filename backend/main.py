@@ -540,36 +540,54 @@ def set_api_key(key: str, contentScriptQuery: str = "") -> str:
         plugin._log_debug(f"DEBUG: set_api_key error: {e}")
         return json.dumps({"success": False, "error": str(e)})
 
+def _get_arg_data(args, kwargs, key=None):
+    """Deep heuristic to find data in chaotic Millennium environment."""
+    data = None
+    # 1. Check kwargs
+    if kwargs:
+        if key and key in kwargs: data = kwargs[key]
+        else: data = kwargs
+        
+    # 2. Check positional args
+    if not data or not isinstance(data, dict):
+        for arg in args:
+            if isinstance(arg, dict):
+                if key and key in arg: data = arg[key]
+                else: data = arg
+                break
+            elif isinstance(arg, str) and arg.strip().startswith('{'):
+                try:
+                    jdata = json.loads(arg)
+                    if key and key in jdata: data = jdata[key]
+                    else: data = jdata
+                    break
+                except: pass
+    return data
+
 def update_settings(*args, **kwargs) -> str:
     try:
         plugin._log_debug(f"DEBUG: update_settings raw args: {args}, kwargs: {kwargs}")
         
-        # Heuristic to find the data in a chaotic Millennium environment
-        data = {}
-        # Priority 1: Check kwargs for 'settings' or direct keys
-        if kwargs:
-            data = kwargs.get("settings", kwargs)
-            
-        # Priority 2: Check positional args if data is still empty or not a dict
-        if not data or not isinstance(data, dict):
-            for arg in args:
-                if isinstance(arg, dict):
-                    data = arg.get("settings", arg)
-                    break
-                elif isinstance(arg, str) and arg.strip().startswith('{'):
-                    try:
-                        jdata = json.loads(arg)
-                        data = jdata.get("settings", jdata)
-                        break
-                    except: pass
+        data = _get_arg_data(args, kwargs, "settings")
         
+        if not data or not isinstance(data, dict):
+             plugin._log_debug(f"DEBUG: update_settings searching for raw data...")
+             data = _get_arg_data(args, kwargs, None)
+             
+        if not data or not isinstance(data, dict):
+            # Final brute force: check for api_key directly in ANY arg
+            for arg in args:
+                if isinstance(arg, dict) and "api_key" in arg:
+                    data = arg
+                    break
+            
         if not data or not isinstance(data, dict):
              plugin._log_debug(f"WARNING: update_settings found NO valid data in {args} or {kwargs}")
              return json.dumps({"success": False, "error": "No valid data received"})
 
         # Scrub data to only include dict keys
         data = {k: v for k, v in data.items() if not k.startswith('_')}
-        plugin._log_debug(f"DEBUG: Processing valid settings data: {list(data.keys())}")
+        plugin._log_debug(f"DEBUG: Processing valid settings data keys: {list(data.keys())}")
 
         # Apply settings with type safety and defaults
         if "api_key" in data: plugin.api_key = str(data["api_key"]).strip()
@@ -625,18 +643,21 @@ def save_config():
 
 def generate_manifest(*args, **kwargs) -> str:
     try:
-        # Find app_id similarly
+        plugin._log_debug(f"DEBUG: generate_manifest called with {args}, {kwargs}")
+        # Use helper to extract app_id
+        data = _get_arg_data(args, kwargs, None) # Get any dict
         app_id = None
-        for arg in args:
-            if isinstance(arg, (str, int)) and str(arg).isdigit():
-                app_id = str(arg)
-                break
-            if isinstance(arg, dict):
-                app_id = arg.get("app_id")
-                break
-        if not app_id and kwargs:
-            app_id = kwargs.get("app_id")
+        
+        if isinstance(data, dict):
+            app_id = data.get("app_id")
             
+        if not app_id:
+            # Fallback to finding a digit in positional args
+            for arg in args:
+                if isinstance(arg, (str, int)) and str(arg).isdigit():
+                    app_id = str(arg)
+                    break
+        
         if not app_id:
             return json.dumps({"success": False, "error": "No App ID provided"})
             
@@ -787,16 +808,18 @@ def clear_history(*args, **kwargs) -> str:
 def request_game(*args, **kwargs) -> str:
     try:
         plugin._log_debug(f"DEBUG: request_game called with {args}, {kwargs}")
+        data = _get_arg_data(args, kwargs, None)
         app_id = None
         reason = "User request via GameGen plugin"
         
-        for arg in args:
-            if isinstance(arg, (str, int)): app_id = str(arg)
-            if isinstance(arg, dict): 
-                app_id = arg.get("app_id")
-                reason = arg.get("reason", reason)
+        if isinstance(data, dict):
+            app_id = data.get("app_id")
+            reason = data.get("reason", reason)
+            
+        if not app_id:
+            for arg in args:
+                if isinstance(arg, (str, int)): app_id = str(arg)
         
-        if not app_id: app_id = kwargs.get("app_id")
         if not app_id: return json.dumps({"success": False, "error": "No App ID"})
         
         if "reason" in kwargs: reason = kwargs["reason"]
@@ -813,11 +836,15 @@ def request_game(*args, **kwargs) -> str:
 
 def uninstall_manifest(*args, **kwargs) -> str:
     try:
+        plugin._log_debug(f"DEBUG: uninstall_manifest called with {args}, {kwargs}")
+        data = _get_arg_data(args, kwargs, None)
         app_id = None
-        for arg in args:
-            if isinstance(arg, (str, int)): app_id = str(arg)
-            if isinstance(arg, dict): app_id = arg.get("app_id")
-        if not app_id: app_id = kwargs.get("app_id")
+        if isinstance(data, dict):
+            app_id = data.get("app_id")
+        
+        if not app_id:
+            for arg in args:
+                if isinstance(arg, (str, int)): app_id = str(arg)
         
         if not app_id: return json.dumps({"success": False, "error": "No App ID"})
         
@@ -895,11 +922,15 @@ def restart_steam(contentScriptQuery: str = "") -> str:
 
 def check_manifest_exists(*args, **kwargs) -> str:
     try:
+        plugin._log_debug(f"DEBUG: check_manifest_exists called with {args}, {kwargs}")
+        data = _get_arg_data(args, kwargs, None)
         app_id = None
-        for arg in args:
-            if isinstance(arg, (str, int)): app_id = str(arg)
-            if isinstance(arg, dict): app_id = arg.get("app_id")
-        if not app_id: app_id = kwargs.get("app_id")
+        if isinstance(data, dict):
+            app_id = data.get("app_id")
+        
+        if not app_id:
+            for arg in args:
+                if isinstance(arg, (str, int)): app_id = str(arg)
         
         if not app_id: return json.dumps({"exists": False, "error": "No App ID"})
         

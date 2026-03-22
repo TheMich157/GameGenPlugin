@@ -4,6 +4,15 @@
 
 (function () {
     console.log("[GameGen] UI v5.0 initialized.");
+    
+    // Global Error Catcher for debugging "stubborn" issues
+    window.onerror = function(msg, url, lineNo, columnNo, error) {
+        console.error("[GameGen] Global Error Caught:", msg, "at", lineNo);
+        if (typeof createToast === 'function') {
+            createToast(`UI Error: ${msg}`, 'error');
+        }
+        return false;
+    };
 
     let uiInjected = false;
     let apiKeySet = false;
@@ -191,15 +200,21 @@
         }
         try {
             console.log(`[GameGen] Calling ${method} with:`, args);
-            // We pass args directly, but our backend is now robust to strings as well if Millennium stringifies under the hood
-            const res = await Millennium.callServerMethod('gamegen', method, args);
+            // v6 style: callServerMethod(plugin, method, [args])
+            // We wrap it in a list to ensure it's passed as a positional argument accurately.
+            let res;
+            try {
+                res = await Millennium.callServerMethod('gamegen', method, [args]);
+            } catch (err) {
+                console.warn(`[GameGen] 3-arg call failed, trying 2nd style:`, err);
+                res = await Millennium.callServerMethod(method, args);
+            }
             
-            // Some versions return raw string, some return object
             const parsed = typeof res === 'string' ? JSON.parse(res) : res;
-            console.log(`[GameGen] Call ${method} result:`, parsed);
+            console.log(`[GameGen] Call ${method} response success:`, !!parsed?.success);
             return parsed;
         } catch (err) {
-            console.error(`[GameGen] Error calling ${method}:`, err);
+            console.error(`[GameGen] Critical error calling ${method}:`, err);
             return { success: false, error: err.message };
         }
     }
@@ -754,57 +769,66 @@
         };
 
         document.getElementById('gg-save-settings').onclick = async () => {
+            console.log("[GameGen] Save Settings button clicked");
             const btn = document.getElementById('gg-save-settings');
             const originalText = btn.innerText;
-            btn.disabled = true;
-            btn.innerText = 'Saving...';
-
-            const key = document.getElementById('gg-key-input').value.trim();
-            const newSettings = {
-                api_key: key,
-                auto_restart_steam: document.getElementById('gg-set-autorestart').checked,
-                beta_updates: document.getElementById('gg-set-beta').checked,
-                debug_logging: document.getElementById('gg-set-debug').checked,
-                notification_duration: 6,
-                open_on_missing_key: document.getElementById('gg-set-autoopen').checked,
-                theme: document.getElementById('gg-set-theme').value,
-                language: document.getElementById('gg-set-lang').value
-            };
             
-            console.log("[GameGen] Saving settings:", newSettings);
-            
-            const res = await safeCall('update_settings', { settings: newSettings });
-            
-            btn.disabled = false;
-            btn.innerText = originalText;
-
-            if (res && (res.success || res.status === 'success')) {
-                const langChanged = settings.language !== newSettings.language;
-                settings = { ...settings, ...newSettings };
-                if (key) {
-                    localStorage.setItem('gamegen_api_key', key);
-                    apiKeySet = true;
-                }
+            try {
+                btn.disabled = true;
+                btn.innerText = 'Connecting...';
                 
-                App.applyTheme(settings.theme);
+                const key = document.getElementById('gg-key-input').value.trim();
+                const newSettings = {
+                    api_key: key,
+                    auto_restart_steam: document.getElementById('gg-set-autorestart').checked,
+                    beta_updates: document.getElementById('gg-set-beta').checked,
+                    debug_logging: document.getElementById('gg-set-debug').checked,
+                    notification_duration: 6,
+                    open_on_missing_key: document.getElementById('gg-set-autoopen').checked,
+                    theme: document.getElementById('gg-set-theme').value,
+                    language: document.getElementById('gg-set-lang').value
+                };
                 
-                if (langChanged) {
-                    createToast("Language changed! Re-injecting UI...", "info");
-                    setTimeout(() => {
-                        const container = document.getElementById('gamegen-plugin-container');
-                        if (container) container.remove();
-                        uiInjected = false;
-                        initUI();
-                        App.toggleUI(true);
-                    }, 1000);
+                console.log("[GameGen] Sending settings to backend:", newSettings);
+                const res = await safeCall('update_settings', { settings: newSettings });
+                console.log("[GameGen] Save settings response:", res);
+            
+                btn.disabled = false;
+                btn.innerText = originalText;
+
+                if (res && (res.success || res.status === 'success')) {
+                    const langChanged = settings.language !== newSettings.language;
+                    settings = { ...settings, ...newSettings };
+                    if (key) {
+                        localStorage.setItem('gamegen_api_key', key);
+                        apiKeySet = true;
+                    }
+                    
+                    App.applyTheme(settings.theme);
+                    
+                    if (langChanged) {
+                        createToast("Language changed! Re-injecting UI...", "info");
+                        setTimeout(() => {
+                            const container = document.getElementById('gamegen-plugin-container');
+                            if (container) container.remove();
+                            uiInjected = false;
+                            initUI();
+                            App.toggleUI(true);
+                        }, 1000);
+                    } else {
+                        createToast(t('save_success'));
+                        // Force stats refresh immediately to sync Neural Link status
+                        setTimeout(() => App.refreshStats(), 500);
+                        App.switchTab('generator');
+                    }
                 } else {
-                    createToast(t('save_success'));
-                    // Force stats refresh immediately to sync Neural Link status
-                    setTimeout(() => App.refreshStats(), 500);
-                    App.switchTab('generator');
+                    createToast("Error saving settings: " + (res?.error || "Unknown error"), "error");
                 }
-            } else {
-                createToast("Error saving settings: " + (res?.error || "Unknown error"), "error");
+            } catch (err) {
+                console.error("[GameGen] Exception during save:", err);
+                createToast("Critical Error: " + err.message, "error");
+                btn.disabled = false;
+                btn.innerText = originalText;
             }
         };
 
