@@ -40,6 +40,7 @@ class Plugin:
         self.beta_updates = False
         self.debug_logging = True
         self.notification_duration = 6 # seconds
+        self.open_on_missing_key = False
         
     def _find_steam_path(self) -> str:
        
@@ -163,6 +164,7 @@ class Plugin:
                         self.beta_updates = bool(data.get("beta_updates", False))
                         self.debug_logging = bool(data.get("debug_logging", True))
                         self.notification_duration = int(data.get("notification_duration", 6))
+                        self.open_on_missing_key = bool(data.get("open_on_missing_key", False))
                         self._log_debug("DEBUG: Config loaded successfully.")
                 except Exception as e:
                     self._log_debug(f"Error loading config: {e}")
@@ -539,27 +541,23 @@ def set_api_key(key: str, contentScriptQuery: str = "") -> str:
 
 def update_settings(settings: Any = None, **kwargs) -> str:
     try:
-        raw_data = settings if settings is not None else kwargs.get("settings", kwargs)
+        plugin._log_debug(f"DEBUG: update_settings called. settings type: {type(settings)}")
         
-        # Determine the final dictionary to work with
-        if isinstance(raw_data, str) and raw_data:
-            try:
-                data = json.loads(raw_data)
-            except:
-                return json.dumps({"success": False, "error": "Invalid JSON format in settings"})
-        elif isinstance(raw_data, dict):
-            data = raw_data
+        # Handle Millennium arguments (either as a dict in 'settings' or as kwargs)
+        if isinstance(settings, dict):
+            data = settings.get("settings", settings)
+        elif not settings and kwargs:
+            data = kwargs.get("settings", kwargs)
         else:
-            return json.dumps({"success": False, "error": f"Unexpected data type: {type(raw_data)}"})
-            
-        # If payload is wrapped in another 'settings' key
-        if isinstance(data, dict) and "settings" in data:
-            data = data["settings"]
-            
-        if not isinstance(data, dict):
-             return json.dumps({"success": False, "error": "Settings payload must be a dictionary"})
+            data = {}
 
-        # Apply settings with type safety
+        if not isinstance(data, dict):
+             plugin._log_debug(f"WARNING: update_settings received non-dict data: {data}")
+             return json.dumps({"success": False, "error": "Invalid settings data format"})
+
+        plugin._log_debug(f"DEBUG: Processing settings data: {data}")
+
+        # Apply settings with type safety and defaults
         if "api_key" in data:
             plugin.api_key = str(data["api_key"])
         if "auto_restart_steam" in data:
@@ -570,27 +568,35 @@ def update_settings(settings: Any = None, **kwargs) -> str:
             plugin.debug_logging = bool(data["debug_logging"])
         if "notification_duration" in data:
             try:
-                val = int(data["notification_duration"])
-                if 0 < val < 3600:
-                    plugin.notification_duration = val
-            except:
+                plugin.notification_duration = int(data["notification_duration"])
+            except (ValueError, TypeError):
                 pass
+        if "open_on_missing_key" in data:
+            plugin.open_on_missing_key = bool(data["open_on_missing_key"])
         
-        plugin._log_debug(f"DEBUG: Applied settings update. New key len: {len(plugin.api_key)}")
+        plugin._log_debug("DEBUG: Triggering save_config after update.")
         save_config()
         return json.dumps({"success": True})
     except Exception as e:
         plugin._log_debug(f"CRITICAL ERROR in update_settings: {e}")
+        import traceback
+        plugin._log_debug(traceback.format_exc())
         return json.dumps({"success": False, "error": str(e)})
 
 def get_settings(contentScriptQuery: str = "") -> str:
-    return json.dumps({
-        "api_key": plugin.api_key,
-        "auto_restart_steam": plugin.auto_restart_steam,
-        "beta_updates": plugin.beta_updates,
-        "debug_logging": plugin.debug_logging,
-        "notification_duration": plugin.notification_duration
-    })
+    try:
+        plugin._log_debug("DEBUG: get_settings called.")
+        return json.dumps({
+            "api_key": plugin.api_key,
+            "auto_restart_steam": plugin.auto_restart_steam,
+            "beta_updates": plugin.beta_updates,
+            "debug_logging": plugin.debug_logging,
+            "notification_duration": plugin.notification_duration,
+            "open_on_missing_key": plugin.open_on_missing_key
+        })
+    except Exception as e:
+        plugin._log_debug(f"ERROR in get_settings: {e}")
+        return json.dumps({"error": str(e)})
 
 def save_config():
     try:
@@ -603,7 +609,8 @@ def save_config():
             "auto_restart_steam": plugin.auto_restart_steam,
             "beta_updates": plugin.beta_updates,
             "debug_logging": plugin.debug_logging,
-            "notification_duration": plugin.notification_duration
+            "notification_duration": plugin.notification_duration,
+            "open_on_missing_key": plugin.open_on_missing_key
         }
         plugin._log_debug(f"DEBUG: Writing config to {plugin.config_path} with data: {data_to_save}")
         
@@ -884,13 +891,15 @@ def get_stats(contentScriptQuery: str = "") -> str:
         remaining = data.get("remaining") or rate_limit.get("remaining") or result.get("remaining") or 0
         limit = data.get("dailyLimit") or rate_limit.get("limit") or result.get("limit") or "∞"
         
+        has_error = not result.get("success") or "data" not in result
+        
         return json.dumps({
-            "success": True,
+            "success": not has_error,
             "remaining": remaining,
             "limit": limit,
             "total_requests": data.get("totalRequests", 0),
             "today_usage": data.get("todayUsage", 0),
-            "error": result.get("error") if not result.get("success") else None
+            "error": result.get("error") if has_error else None
         })
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "remaining": 0, "limit": "∞"})

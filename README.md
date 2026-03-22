@@ -1,6 +1,6 @@
 # GameGen Plugin for Millennium 🎮✨
 
-[![Version 4.0.0](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/TheMich157/GameGenPlugin)
+[![Version 6.0.0](https://img.shields.io/badge/version-6.0.0-blue.svg)](https://github.com/TheMich157/GameGenPlugin)
 [![API](https://img.shields.io/badge/Powered_by-GameGen.lol-purple.svg)](https://gamegen.lol)
 
 A powerful, native Steam plugin built on the [Millennium Framework](https://steambrew.app/) designed for generating, downloading, and injecting Steam game manifests directly via the **GameGen API**.
@@ -10,10 +10,14 @@ Bring instantaneous, seamless license injections straight to the Steam Store wit
 ## 🌟 Features
 
 - **Native Interface**: Injects a premium, dynamic UI right into the Steam client. Adds an "Add to GameGen" button seamlessly onto Store pages.
+- **Internationalization (i18n)**: Fully localized interface with support for multiple languages including English and Polish.
+- **Custom Theme Engine**: Personalize your experience with unique visual themes: *Crimson Red*, *Emerald Green*, *Midnight Indigo*, and *Legacy Steam*.
+- **Neural Batch Processing**: Deploy multiple manifests simultaneously by entering comma-separated App IDs.
+- **Real-time Game Preview**: Automatically fetches game banners and titles from the Steam API as you type.
+- **Quick History Search**: Instantly find previous deployments with a real-time filtering system.
 - **One-Click Generation**: Automatically triggers generation, unpacks ZIP archives, and safely deploys `.acf`, `.manifest`, and `.lua` dependencies into your Steam directories.
-- **Automatic Smart Restarts**: Restarts Steam securely upon successful game manifest deployment, applying licenses on the fly.
-- **Built-in Auto-Updater**: The backend regularly searches for new releases on GitHub and prepares background updates automatically.
-- **Robust ZIP Engine**: Safely sanitizes Windows directory names and smartly bypasses unnecessary wrapper folders.
+- **Automatic Smart Restarts**: Restarts Steam securely upon successful game manifest deployment.
+- **Built-in Auto-Updater**: Regular searches for new releases on GitHub with seamless background background processing.
 
 ## 🚀 Installation
 
